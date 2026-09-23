@@ -1554,7 +1554,6 @@ function render() {
 }
 
 async function loadBundledAssets() {
-  if (mode !== 'gm') return;
   try {
     const response = await fetch('/api/assets/catalog');
     if (!response.ok) return;
@@ -1591,7 +1590,7 @@ async function loadBundledAssets() {
     if (changed) {
       state.backgroundLayerOrder = getBackgroundLayerOrder();
       render();
-      save({ includeAssets: true });
+      if (mode === 'gm') save({ includeAssets: true });
     }
   } catch (error) {
     console.error('Failed to load bundled assets:', error);
