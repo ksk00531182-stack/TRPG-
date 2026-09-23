@@ -71,6 +71,7 @@
           <button class="gm-tab" id="bgmUploadButton" type="button">♫ BGM追加</button>
           <input class="file-input" id="bgmUpload" type="file" accept="audio/*" multiple>
           <button class="gm-tab" id="toggleDiceRoller" type="button" aria-expanded="false">🎲 ダイスロール</button>
+          <button class="gm-tab" id="togglePcPanel" type="button" aria-expanded="false">♙ PC</button>
           <button class="gm-tab" id="toggleGmLibrary" type="button">▤ データ</button>
         </div>
 
@@ -193,6 +194,20 @@
               </div>
               <div class="size-box-resize"></div>
             </div>
+
+            <!-- PC -->
+            <div class="size-box pc-box is-collapsed" data-size-box="pc">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">PC</strong></div>
+              </div>
+              <section class="sidebar-party-box" aria-label="参加プレイヤー">
+                <div class="sidebar-player-tabs" id="sidebarPlayerTabs" role="tablist" aria-label="参加プレイヤー選択"></div>
+                <div class="sidebar-player-detail">
+                  <div id="sidebarPlayerList"></div>
+                </div>
+              </section>
+              <div class="size-box-resize"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -200,28 +215,6 @@
     </main>
 
     <aside class="session-log-sidebar" aria-label="セッションログ">
-      <section class="sidebar-party-box" aria-label="参加プレイヤー">
-        <div class="sidebar-box-heading">
-          <p class="panel-kicker">PARTY STATUS</p>
-          <h2>参加プレイヤー</h2>
-        </div>
-        <div class="sidebar-player-tabs" id="sidebarPlayerTabs" role="tablist" aria-label="参加プレイヤー選択"></div>
-        <div class="sidebar-player-detail">
-          <div id="sidebarPlayerList"></div>
-          <section class="sidebar-dice-box" aria-label="ダイスロール">
-            <div class="sidebar-skill-row">
-              <select id="sidebarSkillTemplateSelect" aria-label="技能テンプレート選択"><option value="">技能を選択</option></select>
-              <button type="button" id="sidebarSkillRollButton" title="技能判定" aria-label="技能判定">🎲</button>
-              <button type="button" id="sidebarSkillDeleteButton" title="技能を削除" aria-label="技能を削除">×</button>
-            </div>
-            <div class="sidebar-skill-form">
-              <input type="text" id="sidebarSkillNameInput" placeholder="技能名" maxlength="30">
-              <input type="number" id="sidebarSkillValueInput" min="1" max="100" placeholder="値">
-              <button type="button" id="sidebarSaveSkillTemplate" title="技能を保存" aria-label="技能を保存">＋</button>
-            </div>
-          </section>
-        </div>
-      </section>
       <div class="panel log-panel">
         <div class="panel-heading">
           <div>

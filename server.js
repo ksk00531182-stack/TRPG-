@@ -47,7 +47,10 @@ const server = http.createServer((request, response) => {
   }
 });
 
-const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  maxHttpBufferSize: 50 * 1024 * 1024
+});
 
 function normalizeRoomId(roomId) {
   return typeof roomId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(roomId)

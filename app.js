@@ -470,8 +470,11 @@ function renderSidebarPlayers() {
       return `<article class="sidebar-player-card">
         <div class="sidebar-player-name"><span class="avatar" style="background:${escapeHtml(player.color || '#6b8f8a')}">${escapeHtml(player.initials || 'PC')}</span><strong>${escapeHtml(player.name || '名前未設定')}</strong><i></i></div>
         <div class="sidebar-player-stats">
-          <label>HP<input type="number" min="0" value="${escapeHtml(player.currentHP ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentHP"></label>
-          <label>SAN<input type="number" min="0" value="${escapeHtml(player.currentSAN ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentSAN"></label>
+          <label>HP<input type="number" min="0" value="${escapeHtml(player.currentHP ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentHP" ${mode === 'pc' ? 'disabled' : ''}></label>
+          <label>SAN<input type="number" min="0" value="${escapeHtml(player.currentSAN ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentSAN" ${mode === 'pc' ? 'disabled' : ''}></label>
+        </div>
+        <div class="sidebar-ability-stats">
+          ${participantAbilityKeys.map((key) => `<div><small>${key}</small><strong>${escapeHtml(player.abilities?.[key] ?? '-')}</strong></div>`).join('')}
         </div>
       </article>`;
     }).join('')
@@ -2129,25 +2132,23 @@ function setupEventListeners() {
     else openAssetSourceModal('all');
   });
 
+  $('#togglePcPanel')?.addEventListener('click', () => {
+    const box = $('[data-size-box="pc"]');
+    if (!box) return;
+    const isOpen = box.classList.toggle('is-collapsed') === false;
+    $('#togglePcPanel').setAttribute('aria-expanded', String(isOpen));
+  });
+
   const boardVisibilityButton = $('#boardVisibilityToggle');
   const diceVisibilityButton = $('#diceVisibilityToggle');
   let diceVisibilityHidden = false;
-  let boardVisibilityPressed = false;
-  const releaseBoardVisibility = () => {
-    if (!boardVisibilityPressed) return;
-    boardVisibilityPressed = false;
-    setPcBoardVisibility(false);
-    if (boardVisibilityButton) boardVisibilityButton.textContent = 'PC盤面を隠す';
-  };
-  boardVisibilityButton?.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    boardVisibilityPressed = true;
-    setPcBoardVisibility(true);
-    boardVisibilityButton.textContent = 'PC盤面を表示';
+  let boardVisibilityHidden = localStorage.getItem(pcBoardHiddenKey) === 'true';
+  if (boardVisibilityButton) boardVisibilityButton.textContent = boardVisibilityHidden ? 'PC盤面を表示' : 'PC盤面を隠す';
+  boardVisibilityButton?.addEventListener('click', () => {
+    boardVisibilityHidden = !boardVisibilityHidden;
+    setPcBoardVisibility(boardVisibilityHidden);
+    boardVisibilityButton.textContent = boardVisibilityHidden ? 'PC盤面を表示' : 'PC盤面を隠す';
   });
-  window.addEventListener('pointerup', releaseBoardVisibility);
-  window.addEventListener('pointercancel', releaseBoardVisibility);
-  window.addEventListener('blur', releaseBoardVisibility);
 
   diceVisibilityButton?.addEventListener('click', () => {
     diceVisibilityHidden = !diceVisibilityHidden;
@@ -2156,10 +2157,16 @@ function setupEventListeners() {
   });
 
   window.addEventListener('storage', (event) => {
-    if (event.key === pcBoardHiddenKey) applyPcBoardVisibility(event.newValue === 'true');
+    if (event.key === pcBoardHiddenKey) {
+      boardVisibilityHidden = event.newValue === 'true';
+      applyPcBoardVisibility(boardVisibilityHidden);
+      if (boardVisibilityButton) boardVisibilityButton.textContent = boardVisibilityHidden ? 'PC盤面を表示' : 'PC盤面を隠す';
+    }
   });
   boardVisibilityChannel?.addEventListener('message', (event) => {
-    applyPcBoardVisibility(event.data?.hidden === true);
+    boardVisibilityHidden = event.data?.hidden === true;
+    applyPcBoardVisibility(boardVisibilityHidden);
+    if (boardVisibilityButton) boardVisibilityButton.textContent = boardVisibilityHidden ? 'PC盤面を表示' : 'PC盤面を隠す';
   });
 
   $('#toggleDiceRoller')?.addEventListener('click', (event) => {
