@@ -171,6 +171,29 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('trpg_asset_add', ({ roomId, assetType, asset, overlay } = {}) => {
+    if (!asset || typeof asset.data !== 'string') return;
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const roomState = trpgRooms.get(normalizedRoomId);
+    if (roomState) {
+      if (assetType === 'background') {
+        roomState.backgroundLayers ||= [];
+        if (!roomState.backgroundLayers.some((layer) => layer.id === asset.id)) roomState.backgroundLayers.push(asset);
+      } else if (assetType === 'clueImages' || assetType === 'sceneImages') {
+        roomState[assetType] ||= [];
+        if (!roomState[assetType].some((item) => item.name === asset.name && item.data === asset.data)) roomState[assetType].push(asset);
+        if (overlay) {
+          roomState.sceneOverlays ||= [];
+          if (!roomState.sceneOverlays.some((item) => item.name === overlay.name && item.data === overlay.data)) roomState.sceneOverlays.push(overlay);
+        }
+      } else if (assetType === 'character' && overlay) {
+        roomState.sceneOverlays ||= [];
+        if (!roomState.sceneOverlays.some((item) => item.name === overlay.name && item.data === overlay.data)) roomState.sceneOverlays.push(overlay);
+      }
+    }
+    socket.to(`trpg:${normalizedRoomId}`).emit('trpg_asset_add', { assetType, asset, overlay });
+  });
+
   socket.on('trpg_dice_result', ({ roomId, title, message, resultClass } = {}) => {
     const normalizedRoomId = normalizeRoomId(roomId);
     socket.to(`trpg:${normalizedRoomId}`).emit('trpg_dice_result', {

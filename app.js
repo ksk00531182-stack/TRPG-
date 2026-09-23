@@ -221,6 +221,17 @@ realtimeSocket?.on('trpg_image_transform', ({ layerType, layerId, x, y, size }) 
   if (Number.isFinite(size) && layerType === 'overlay') target.size = size;
   renderOverlays();
 });
+realtimeSocket?.on('trpg_asset_add', ({ assetType, asset, overlay }) => {
+  if (!asset?.data) return;
+  if (assetType === 'background') {
+    if (!state.backgroundLayers.some((layer) => layer.id === asset.id)) state.backgroundLayers.push(asset);
+    state.backgroundLayerOrder = getBackgroundLayerOrder();
+  } else if (assetType === 'clueImages' || assetType === 'sceneImages') {
+    if (!state[assetType].some((item) => item.name === asset.name && item.data === asset.data)) state[assetType].push(asset);
+    if (overlay && !state.sceneOverlays.some((item) => item.name === overlay.name && item.data === overlay.data)) state.sceneOverlays.push(overlay);
+  }
+  render();
+});
 
 function mergeRemoteState(remoteState) {
   const merged = { ...state, ...remoteState };
@@ -354,6 +365,11 @@ function syncImageTransform(layerType, layerId, target) {
     y: target.y,
     size: target.size
   });
+}
+
+function syncAssetAdd(assetType, asset, overlay = null) {
+  if (mode !== 'gm') return;
+  realtimeSocket?.emit('trpg_asset_add', { roomId: visibilityRoomId, assetType, asset, overlay });
 }
 
 function syncBgmPlayback(playing) {
@@ -1529,12 +1545,14 @@ function readBackgroundImages(files) {
       const layerId = `bg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
       const alreadyExists = state.backgroundLayers.some((layer) => layer.data === reader.result && layer.name === file.name);
       if (!alreadyExists) {
-        state.backgroundLayers.push({ id: layerId, name: file.name, data: reader.result, visible: true });
+        const layer = { id: layerId, name: file.name, data: reader.result, visible: true };
+        state.backgroundLayers.push(layer);
         state.backgroundLayerOrder = getBackgroundLayerOrder();
+        syncAssetAdd('background', layer);
       }
       renderImages();
       renderBackgroundLayerList();
-      save({ includeAssets: true });
+      save();
     });
     reader.readAsDataURL(file);
   });
@@ -1548,7 +1566,12 @@ function readImages(files, stateKey) {
       const image = { name: file.name, type: file.type, data: reader.result, layer: defaultLayer };
       state[stateKey].push(image);
       if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-        addOverlay({ ...image, layer: image.layer || defaultLayer });
+        const overlay = createOverlay({ ...image, layer: image.layer || defaultLayer });
+        state.sceneOverlays.push(overlay);
+        selectedOverlayIndex = state.sceneOverlays.length - 1;
+        activeSizeLayer = image.layer || defaultLayer;
+        renderOverlays();
+        syncAssetAdd(stateKey, image, overlay);
       }
       save();
     });
@@ -1556,8 +1579,12 @@ function readImages(files, stateKey) {
   });
 }
 
+function createOverlay(image) {
+  return { name: image.name, data: image.data, layer: image.layer || 'material', x: 50, y: 50, size: 110, rotation: 0, visible: true, groupId: null };
+}
+
 function addOverlay(image) {
-  state.sceneOverlays.push({ name: image.name, data: image.data, layer: image.layer || 'material', x: 50, y: 50, size: 110, rotation: 0, visible: true, groupId: null });
+  state.sceneOverlays.push(createOverlay(image));
   selectedOverlayIndex = state.sceneOverlays.length - 1;
   selectedGroupId = null;
   activeSizeLayer = image.layer || 'material';
@@ -2051,7 +2078,12 @@ function setupEventListeners() {
           const initials = $('#spotlightInitials');
           if (initials) initials.textContent = file.name.slice(0, 2).toUpperCase();
         }
-        addOverlay(image);
+        const overlay = createOverlay(image);
+        state.sceneOverlays.push(overlay);
+        selectedOverlayIndex = state.sceneOverlays.length - 1;
+        activeSizeLayer = 'character';
+        renderOverlays();
+        syncAssetAdd('character', image, overlay);
         save();
       });
       reader.readAsDataURL(file);
