@@ -29,6 +29,7 @@ if (mode === 'gm') {
 }
 let applyingRemoteState = false;
 let remoteSyncTimer = null;
+let remoteBgmShouldPlay = false;
 
 const defaultState = {
   backgroundLayers: [],
@@ -84,6 +85,18 @@ function loadInitialState() {
 let state = loadInitialState();
 
 function sanitizeAndNormalizeState() {
+  const obsoleteLogs = [
+    ['21:43', 'リナが灯台の扉に手をかけた。'],
+    ['21:39', '霧の向こうに人影。'],
+    ['21:31', 'カイが〈観察〉に成功。'],
+    ['21:26', 'シーン「海岸線」を開始。']
+  ];
+  const logsBeforeCleanup = Array.isArray(state.logs) ? state.logs : [];
+  state.logs = logsBeforeCleanup.filter((log) => {
+    const plainText = String(log?.text || '').replace(/<[^>]*>/g, '');
+    return !obsoleteLogs.some(([time, text]) => log?.time === time && plainText.includes(text));
+  });
+  const logsChanged = state.logs.length !== logsBeforeCleanup.length;
   delete state.sceneNote;
   delete state.scenarioNote;
   delete state.scenarioTitle;
@@ -149,9 +162,11 @@ function sanitizeAndNormalizeState() {
   ])];
 
   state.layerGroups = state.layerGroups.map((group) => ({ visible: true, ...group }));
+  return logsChanged;
 }
 
-sanitizeAndNormalizeState();
+const initialLogsCleaned = sanitizeAndNormalizeState();
+if (initialLogsCleaned) localStorage.setItem(storageKey, JSON.stringify(state));
 
 visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
   roomId: visibilityRoomId,
@@ -159,6 +174,17 @@ visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
   state: mode === 'gm' ? state : undefined
 }));
 visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+visibilitySocket?.on('trpg_bgm_control', ({ playing }) => {
+  remoteBgmShouldPlay = playing === true;
+  const audio = $('#bgmAudio');
+  if (!audio || !state.bgm.data) return;
+  if (remoteBgmShouldPlay) {
+    audio.play().catch(() => {});
+  } else {
+    audio.pause();
+  }
+  renderBgm();
+});
 visibilitySocket?.on('trpg_logs', (logs) => {
   if (!Array.isArray(logs)) return;
   state.logs = logs;
@@ -189,9 +215,10 @@ visibilitySocket?.on('trpg_state', (remoteState) => {
   if (!remoteState || typeof remoteState !== 'object') return;
   applyingRemoteState = true;
   state = remoteState;
-  sanitizeAndNormalizeState();
+  const logsChanged = sanitizeAndNormalizeState();
   render();
   applyingRemoteState = false;
+  if (mode === 'gm' && logsChanged) save({ syncState: false, syncLog: true });
 });
 
 // UI選択状態
@@ -267,6 +294,12 @@ function syncOverlayVisibility(index, visible) {
     layerId: String(index),
     visible: visible === true
   });
+}
+
+function syncBgmPlayback(playing) {
+  if (mode !== 'gm') return;
+  state.bgm.playing = playing === true;
+  visibilitySocket?.emit('trpg_bgm_control', { roomId: visibilityRoomId, playing: playing === true });
 }
 
 function exportStateToJson() {
@@ -345,6 +378,10 @@ function renderBgm() {
     audio.removeAttribute('src');
     delete audio.dataset.bgmData;
     audio.load();
+  }
+  if (mode === 'pc' && state.bgm.playing) {
+    remoteBgmShouldPlay = true;
+    audio.play().catch(() => {});
   }
 }
 
@@ -1792,6 +1829,13 @@ function setupEventListeners() {
   });
   $('#bgmAudio')?.addEventListener('play', renderBgm);
   $('#bgmAudio')?.addEventListener('pause', renderBgm);
+  $('#bgmAudio')?.addEventListener('play', () => syncBgmPlayback(true));
+  $('#bgmAudio')?.addEventListener('pause', () => syncBgmPlayback(false));
+  document.addEventListener('pointerdown', () => {
+    if (mode !== 'pc' || !remoteBgmShouldPlay) return;
+    const audio = $('#bgmAudio');
+    if (audio && state.bgm.data && audio.paused) audio.play().catch(() => {});
+  }, { once: false });
 
   document.querySelectorAll('[data-asset-category]').forEach((button) => {
     button.addEventListener('click', () => openAssetSourceModal(button.dataset.assetCategory));
@@ -2224,7 +2268,7 @@ function setupEventListeners() {
   diceVisibilityButton?.addEventListener('click', () => {
     diceVisibilityHidden = !diceVisibilityHidden;
     applyPcDiceVisibility(diceVisibilityHidden);
-    diceVisibilityButton.textContent = diceVisibilityHidden ? 'ダイスを表示' : 'ダイスを隠す';
+    diceVisibilityButton.textContent = diceVisibilityHidden ? '情報を表示' : '情報を隠す';
   });
 
   window.addEventListener('storage', (event) => {

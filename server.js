@@ -95,6 +95,13 @@ io.on('connection', (socket) => {
     io.to(`trpg:${normalizedRoomId}`).emit('trpg_board_visibility', { hidden: hidden === true });
   });
 
+  socket.on('trpg_bgm_control', ({ roomId, playing } = {}) => {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const roomState = trpgRooms.get(normalizedRoomId);
+    if (roomState?.bgm) roomState.bgm.playing = playing === true;
+    io.to(`trpg:${normalizedRoomId}`).emit('trpg_bgm_control', { playing: playing === true });
+  });
+
   socket.on('trpg_layer_visibility', ({ roomId, layerType, layerId, visible } = {}) => {
     if (!['background', 'overlay'].includes(layerType) || typeof layerId !== 'string') return;
     const normalizedRoomId = normalizeRoomId(roomId);

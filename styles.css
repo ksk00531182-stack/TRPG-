@@ -281,7 +281,8 @@ button { cursor: pointer; color: inherit; }
 .board-visibility-toggle:hover { background: rgba(231,184,107,.15); }
 .pc-only { display: none; }
 .pc-mode .pc-only { display: block; }
-.pc-mode.pc-dice-hidden .overlay-controls .size-box[data-size-box="dice"] { display: none; }
+.pc-mode.pc-dice-hidden .overlay-controls .size-box[data-size-box="dice"],
+.pc-mode.pc-dice-hidden .overlay-controls .size-box[data-size-box="pc"] { display: none; }
 .stage-sidebar-heading { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .stage-sidebar-heading h2 { margin: 0; font: 600 15px 'Noto Serif JP'; }
 .stage-player-tabs { display: flex; gap: 4px; overflow-x: auto; margin-top: 10px; padding-bottom: 3px; }
