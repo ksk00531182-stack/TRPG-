@@ -47,6 +47,14 @@ GM画面右下のレイヤー一覧では画像が1行ずつ表示され、上�
 
 Renderなどへデプロイする場合は、Web ServiceのStart Commandに `npm start` を設定します。GMとPCは同じサーバーURLの参加URLを使ってください。
 
+## Renderへのデプロイ
+
+リポジトリのルートをRenderのWeb Serviceとして登録してください。`render.yaml`を使う場合はBlueprintとして読み込めます。Start Commandは `node server.js` です。
+
+画像を再起動後も保持するため、Persistent Diskを `/var/data` にマウントし、環境変数 `TRPG_ASSET_DIR=/var/data/trpg-assets` を設定します。`render.yaml`にはこの設定を含めています。無料プランなどPersistent Diskが使えない環境では、アップロード画像は再起動時に失われるため、外部ストレージが必要です。
+
+デプロイ後は `https://<サービス名>.onrender.com/trpg-session-room/index.html?mode=gm` を開き、GM画面の「参加URL」をPCへ共有してください。
+
 ## 画像フォルダ
 
 - `assets/backgrounds`: セッション背景
