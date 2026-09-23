@@ -31,6 +31,7 @@ if (mode === 'gm') {
 let applyingRemoteState = false;
 let remoteSyncTimer = null;
 let remoteBgmShouldPlay = false;
+let localSaveTimer = null;
 
 const defaultState = {
   backgroundLayers: [],
@@ -292,8 +293,16 @@ function createLightweightState() {
   return lightweight;
 }
 
-function save({ syncState = true, syncLog = false, includeAssets = false } = {}) {
-  localStorage.setItem(storageKey, JSON.stringify(state));
+function save({ syncState = true, syncLog = false, includeAssets = false, deferLocalSave = false } = {}) {
+  if (deferLocalSave) {
+    if (localSaveTimer) window.clearTimeout(localSaveTimer);
+    localSaveTimer = window.setTimeout(() => {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+      localSaveTimer = null;
+    }, 250);
+  } else {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  }
   if (!syncState && remoteSyncTimer) {
     window.clearTimeout(remoteSyncTimer);
     remoteSyncTimer = null;
@@ -1552,7 +1561,7 @@ function readBackgroundImages(files) {
       }
       renderImages();
       renderBackgroundLayerList();
-      save();
+      save({ deferLocalSave: true });
     });
     reader.readAsDataURL(file);
   });
@@ -1573,7 +1582,7 @@ function readImages(files, stateKey) {
         renderOverlays();
         syncAssetAdd(stateKey, image, overlay);
       }
-      save();
+      save({ deferLocalSave: true });
     });
     reader.readAsDataURL(file);
   });
@@ -2084,7 +2093,7 @@ function setupEventListeners() {
         activeSizeLayer = 'character';
         renderOverlays();
         syncAssetAdd('character', image, overlay);
-        save();
+        save({ deferLocalSave: true });
       });
       reader.readAsDataURL(file);
     });
