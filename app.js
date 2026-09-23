@@ -110,7 +110,7 @@ function sanitizeAndNormalizeState() {
   // 内部データモデルの平準化
   state.clueImages ||= [];
   state.sceneImages ||= [];
-  state.characterImages ||= [];
+  state.characterImages = Array.isArray(state.characterImages) ? state.characterImages : [];
   state.backgroundScale ||= 100;
   state.backgroundDimming ||= { white: false, black: false };
   state.backgroundLocked = Boolean(state.backgroundLocked);
