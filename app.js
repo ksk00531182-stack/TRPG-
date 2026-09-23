@@ -15,6 +15,7 @@ const mode = requestedMode && ['pc', 'gm'].includes(requestedMode.toLowerCase())
   : 'gm';
 const boardVisibilityChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('trpg-session-room-board-visibility') : null;
 const visibilitySocket = typeof io === 'function' ? io() : null;
+const realtimeSocket = typeof io === 'function' ? io() : null;
 const roomParam = normalizeRoomId(urlParams.get('room'));
 const storedRoomId = mode === 'gm' ? normalizeRoomId(localStorage.getItem('trpg-session-room-id')) : null;
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
@@ -185,12 +186,13 @@ visibilitySocket?.on('trpg_bgm_control', ({ playing }) => {
   }
   renderBgm();
 });
-visibilitySocket?.on('trpg_logs', (logs) => {
-  if (!Array.isArray(logs)) return;
+realtimeSocket?.on('connect', () => realtimeSocket.emit('trpg_subscribe', { roomId: visibilityRoomId }));
+visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+realtimeSocket?.on('trpg_logs', (logs) => {
   state.logs = logs;
   renderLogs();
 });
-visibilitySocket?.on('trpg_layer_visibility', ({ layerType, layerId, visible }) => {
+realtimeSocket?.on('trpg_layer_visibility', ({ layerType, layerId, visible }) => {
   if (layerType === 'background') {
     if (layerId === 'whiteDark' || layerId === 'blackDark') {
       const config = getBackgroundLayerConfig(layerId);
@@ -207,6 +209,17 @@ visibilitySocket?.on('trpg_layer_visibility', ({ layerType, layerId, visible }) 
     overlay.visible = visible === true;
     renderOverlays();
   }
+});
+realtimeSocket?.on('trpg_image_transform', ({ layerType, layerId, x, y, size }) => {
+  const numericId = Number(layerId);
+  const target = layerType === 'background'
+    ? state.backgroundLayers.find((layer) => layer.id === layerId)
+    : state.sceneOverlays[numericId];
+  if (!target) return;
+  if (Number.isFinite(x)) target.x = x;
+  if (Number.isFinite(y)) target.y = y;
+  if (Number.isFinite(size) && layerType === 'overlay') target.size = size;
+  renderOverlays();
 });
 visibilitySocket?.on('trpg_dice_result', (result) => {
   if (mode === 'pc') showPcDiceResult(result);
@@ -254,7 +267,7 @@ function save({ syncState = true, syncLog = false } = {}) {
 
 function syncLogs() {
   if (applyingRemoteState) return;
-  visibilitySocket?.emit('trpg_logs_update', { roomId: visibilityRoomId, logs: state.logs });
+  realtimeSocket?.emit('trpg_logs_update', { roomId: visibilityRoomId, logs: state.logs });
 }
 
 function createPlayerInviteUrl() {
@@ -278,7 +291,7 @@ function syncRemoteState() {
 
 function syncLayerVisibility(layerId, visible) {
   if (mode !== 'gm') return;
-  visibilitySocket?.emit('trpg_layer_visibility', {
+  realtimeSocket?.emit('trpg_layer_visibility', {
     roomId: visibilityRoomId,
     layerType: 'background',
     layerId,
@@ -288,11 +301,23 @@ function syncLayerVisibility(layerId, visible) {
 
 function syncOverlayVisibility(index, visible) {
   if (mode !== 'gm') return;
-  visibilitySocket?.emit('trpg_layer_visibility', {
+  realtimeSocket?.emit('trpg_layer_visibility', {
     roomId: visibilityRoomId,
     layerType: 'overlay',
     layerId: String(index),
     visible: visible === true
+  });
+}
+
+function syncImageTransform(layerType, layerId, target) {
+  if (mode !== 'gm') return;
+  realtimeSocket?.emit('trpg_image_transform', {
+    roomId: visibilityRoomId,
+    layerType,
+    layerId: String(layerId),
+    x: target.x,
+    y: target.y,
+    size: target.size
   });
 }
 
@@ -1553,7 +1578,7 @@ function startDraggingBackgroundLayer(event, layer) {
     layer.x = Math.max(0, Math.min(100, startPosition.x + deltaX));
     layer.y = Math.max(0, Math.min(100, startPosition.y + deltaY));
     renderOverlays();
-    syncRemoteState();
+    syncImageTransform('background', layer.id, layer);
   };
 
   const stop = () => {
@@ -1598,7 +1623,7 @@ function startDraggingOverlay(event, image) {
         node.style.top = `${item.y}%`;
       }
     });
-    syncRemoteState();
+    affectedObjects.forEach((item, idx) => syncImageTransform('overlay', affectedIndexes[idx], item));
   };
 
   const stop = () => {

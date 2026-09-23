@@ -63,6 +63,10 @@ function normalizeRoomId(roomId) {
 }
 
 io.on('connection', (socket) => {
+  socket.on('trpg_subscribe', ({ roomId } = {}) => {
+    socket.join(`trpg:${normalizeRoomId(roomId)}`);
+  });
+
   socket.on('trpg_join', ({ roomId, mode, state } = {}) => {
     const normalizedRoomId = normalizeRoomId(roomId);
     const roomKey = `trpg:${normalizedRoomId}`;
@@ -126,6 +130,23 @@ io.on('connection', (socket) => {
       layerType,
       layerId,
       visible: visible === true
+    });
+  });
+
+  socket.on('trpg_image_transform', ({ roomId, layerType, layerId, x, y, size } = {}) => {
+    if (!['background', 'overlay'].includes(layerType) || typeof layerId !== 'string') return;
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const roomState = trpgRooms.get(normalizedRoomId);
+    const target = layerType === 'background'
+      ? roomState?.backgroundLayers?.find((layer) => layer.id === layerId)
+      : roomState?.sceneOverlays?.[Number(layerId)];
+    if (target) {
+      if (Number.isFinite(x)) target.x = x;
+      if (Number.isFinite(y)) target.y = y;
+      if (Number.isFinite(size) && layerType === 'overlay') target.size = size;
+    }
+    io.to(`trpg:${normalizedRoomId}`).emit('trpg_image_transform', {
+      layerType, layerId, x, y, size
     });
   });
 
