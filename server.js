@@ -9,6 +9,12 @@ const rootDirectory = __dirname;
 const trpgRooms = new Map();
 const assetDirectory = path.join(rootDirectory, 'assets', 'session');
 fs.mkdirSync(assetDirectory, { recursive: true });
+const bundledAssetDirectories = {
+  background: path.join(rootDirectory, 'assets', 'backgrounds'),
+  character: path.join(rootDirectory, 'assets', 'characters'),
+  material: path.join(rootDirectory, 'assets', 'clues'),
+  icon: path.join(rootDirectory, 'assets', 'scene-images')
+};
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -59,6 +65,21 @@ const server = http.createServer((request, response) => {
           response.end(JSON.stringify({ error: 'Invalid asset' }));
         }
       });
+      return;
+    }
+    if (request.method === 'GET' && request.url?.split('?')[0] === '/api/assets/catalog') {
+      const catalog = Object.entries(bundledAssetDirectories).flatMap(([category, directory]) => {
+        if (!fs.existsSync(directory)) return [];
+        return fs.readdirSync(directory, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && !entry.name.toLowerCase().endsWith('.txt'))
+          .map((entry) => ({
+            category,
+            name: entry.name,
+            data: `/assets/${path.basename(directory)}/${encodeURIComponent(entry.name)}`
+          }));
+      });
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify(catalog));
       return;
     }
     const filePath = getStaticFile(new URL(request.url, `http://${request.headers.host || 'localhost'}`));

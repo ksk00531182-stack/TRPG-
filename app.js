@@ -38,6 +38,7 @@ const defaultState = {
   characterImage: '',
   clueImages: [],
   sceneImages: [],
+  characterImages: [],
   sceneOverlays: [],
   backgroundScale: 100,
   backgroundLayerOrder: ['whiteDark', 'blackDark'],
@@ -109,6 +110,7 @@ function sanitizeAndNormalizeState() {
   // 内部データモデルの平準化
   state.clueImages ||= [];
   state.sceneImages ||= [];
+  state.characterImages ||= [];
   state.backgroundScale ||= 100;
   state.backgroundDimming ||= { white: false, black: false };
   state.backgroundLocked = Boolean(state.backgroundLocked);
@@ -719,7 +721,7 @@ function getAssetLibrary(category) {
     return state.backgroundLayers.filter((layer) => layer.data).map((layer) => ({ name: layer.name || '背景画像', type: 'image', data: layer.data }));
   }
   if (category === 'character') {
-    return state.sceneOverlays.filter((overlay) => overlay.data && (overlay.layer || 'material') === 'character');
+    return state.characterImages.filter((image) => image.data);
   }
   const images = category === 'material' ? state.clueImages : state.sceneImages;
   return (images || []).filter((image) => image.data && image.type !== 'application/pdf');
@@ -1549,6 +1551,43 @@ function render() {
   renderSkillTemplates();
   renderImages();
   renderBackgroundLayerList();
+}
+
+async function loadBundledAssets() {
+  if (mode !== 'gm') return;
+  try {
+    const response = await fetch('/api/assets/catalog');
+    if (!response.ok) return;
+    const catalog = await response.json();
+    let changed = false;
+    catalog.forEach((asset) => {
+      const image = { name: asset.name, type: '', data: asset.data, layer: asset.category };
+      if (asset.category === 'background') {
+        if (!state.backgroundLayers.some((layer) => layer.data === image.data)) {
+          state.backgroundLayers.push({ id: `bundled-${asset.name}`, ...image, visible: true });
+          changed = true;
+        }
+      } else if (asset.category === 'character') {
+        if (!state.characterImages.some((entry) => entry.data === image.data)) {
+          state.characterImages.push(image);
+          changed = true;
+        }
+      } else {
+        const target = asset.category === 'material' ? state.clueImages : state.sceneImages;
+        if (!target.some((entry) => entry.data === image.data)) {
+          target.push(image);
+          changed = true;
+        }
+      }
+    });
+    if (changed) {
+      state.backgroundLayerOrder = getBackgroundLayerOrder();
+      render();
+      save({ includeAssets: true });
+    }
+  } catch (error) {
+    console.error('Failed to load bundled assets:', error);
+  }
 }
 
 function readBackgroundImages(files) {
@@ -2585,3 +2624,4 @@ applyMode();
 render();
 setupEventListeners();
 setupSizeBoxInteractions();
+loadBundledAssets();
