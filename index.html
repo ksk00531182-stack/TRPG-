@@ -29,8 +29,8 @@
     <main class="main-content">
       <header class="topbar">
         <div>
-          <p class="eyebrow">CAMPAIGN / NIGHTFALL ARCHIVE</p>
-          <h1 id="campaignTitle">灰色港の灯台</h1>
+          <p class="eyebrow">CAMPAIGN / SESSION ROOM</p>
+          <h1 id="campaignTitle">セッション</h1>
           <span class="role-badge" id="roleBadge">GM EDITOR</span>
         </div>
         <div class="top-actions">
@@ -47,15 +47,15 @@
 
       <section class="session-banner" id="sessionBanner">
         <div class="scene-banner-content">
-          <span class="chapter-label">CHAPTER 02</span>
-          <h2 id="sceneTitle">灯台守のいない灯台</h2>
-          <p id="sceneDescription">海霧の向こうで、消えたはずの灯りが三度またたいた。</p>
+          <span class="chapter-label">SCENE</span>
+          <h2 id="sceneTitle">シーン未設定</h2>
+          <p id="sceneDescription">シーン情報はまだ設定されていません。</p>
           <label class="image-upload-button gm-only" for="backgroundUpload">▧ 背景レイヤー追加</label>
           <input class="file-input gm-only" id="backgroundUpload" type="file" accept="image/*" multiple>
         </div>
         <div class="session-meta">
-          <div><span>経過時間</span><strong id="sessionTime">02:18:44</strong></div>
-          <div><span>天候</span><strong>濃霧 / 弱風</strong></div>
+          <div><span>経過時間</span><strong id="sessionTime">--:--:--</strong></div>
+          <div><span>天候</span><strong>未設定</strong></div>
         </div>
         <div class="scene-overlays" id="sceneOverlays" aria-label="背景上の配置画像"></div>
 
@@ -70,10 +70,8 @@
           <button class="gm-tab" type="button" data-asset-category="background">▣ 背景追加</button>
           <button class="gm-tab" id="bgmUploadButton" type="button">♫ BGM追加</button>
           <input class="file-input" id="bgmUpload" type="file" accept="audio/*" multiple>
-          <button class="gm-tab" id="saveScenePreset" type="button">💾 シーン保存</button>
-          <button class="gm-tab" id="openScenePresets" type="button">▣ シーン一覧</button>
           <button class="gm-tab" id="toggleDiceRoller" type="button" aria-expanded="false">🎲 ダイスロール</button>
-          <button class="gm-tab" id="toggleGmLibrary" type="button">▤ 素材一覧</button>
+          <button class="gm-tab" id="toggleGmLibrary" type="button">▤ データ</button>
         </div>
 
         <div class="size-box bgm-controls bgm-box gm-only" id="bgmControls" data-size-box="bgm" aria-label="BGM音量">
@@ -93,8 +91,11 @@
         <button class="board-visibility-toggle gm-only" id="boardVisibilityToggle" type="button" aria-label="PC画面の盤面表示を切り替え">
           PC盤面を隠す
         </button>
+        <button class="board-visibility-toggle pc-only dice-visibility-toggle" id="diceVisibilityToggle" type="button" aria-label="ダイス表示を切り替え">
+          ダイスを隠す
+        </button>
 
-        <div class="overlay-controls gm-only" id="overlayControls" aria-label="選択画像の操作">
+        <div class="overlay-controls" id="overlayControls" aria-label="選択画像の操作">
           <div class="size-boxes" aria-label="カテゴリ別サイズ変更">
             <!-- キャラクター -->
             <div class="size-box" data-size-box="character">
@@ -169,7 +170,7 @@
                   <input type="checkbox" id="secretDice">
                   <span>シークレットダイス</span>
                 </label>
-                <button class="roll-button" id="rollButton" type="button">振る <span>🎲</span></button>
+                <button class="roll-button" id="rollButton" type="button" title="ダイスを振る" aria-label="ダイスを振る"><span>🎲</span></button>
               </div>
               <div class="skill-template-controls">
                 <label for="skillTemplateSelect">技能テンプレート</label>
@@ -178,6 +179,7 @@
                     <option value="">技能を選択</option>
                   </select>
                   <button type="button" class="skill-roll-button" id="skillRollButton" title="技能判定" aria-label="技能判定">🎲</button>
+                  <button type="button" class="skill-delete-button" id="deleteSkillTemplate" title="技能を削除" aria-label="技能を削除">×</button>
                 </div>
                 <div class="skill-template-form">
                   <input type="text" id="skillNameInput" placeholder="技能名" maxlength="30">
@@ -195,54 +197,30 @@
         </div>
       </section>
 
-      <!-- メインダッシュボード -->
-      <div class="dashboard-grid">
-        <!-- シナリオ -->
-        <div class="panel scenario-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="panel-kicker">SCENARIO</p>
-              <input class="scenario-title-input" id="scenarioTitleInput" type="text" placeholder="シナリオタイトル">
-            </div>
-            <button type="button" class="icon-button gm-only" id="editScenarioButton" title="編集">✎</button>
-          </div>
-          <div class="scenario-tabs" id="scenarioTabs" role="tablist" aria-label="シナリオタブ"></div>
-          <button class="scenario-tab-add gm-only" id="addScenarioTab" type="button">＋ タブ追加</button>
-          <div class="scenario-color-tools gm-only" role="toolbar" aria-label="文字色">
-            <button type="button" data-scenario-color="#e8edf0" title="白">白</button>
-            <button type="button" data-scenario-color="#eb8d7e" title="赤">赤</button>
-            <button type="button" data-scenario-color="#91b9e8" title="青">青</button>
-          </div>
-          <div id="scenarioNote" class="scenario-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="シナリオを入力..."></div>
-          <div class="tag-row">
-            <span class="tag amber">GM専用</span>
-            <span class="tag blue">セッション設定</span>
-          </div>
-        </div>
-
-        <!-- 参加者 -->
-        <div class="panel players-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="panel-kicker">MEMBERS</p>
-              <h3>参加者一覧</h3>
-            </div>
-          </div>
-          <div class="player-list" id="playerList"></div>
-          <button type="button" class="add-player gm-only" id="addPlayer">＋ 参加者を招集</button>
-        </div>
-
-      </div>
     </main>
 
     <aside class="session-log-sidebar" aria-label="セッションログ">
-      <section class="session-party-panel" aria-label="参加者情報">
-        <div class="stage-sidebar-heading">
+      <section class="sidebar-party-box" aria-label="参加プレイヤー">
+        <div class="sidebar-box-heading">
           <p class="panel-kicker">PARTY STATUS</p>
           <h2>参加プレイヤー</h2>
         </div>
-        <div class="stage-player-tabs" id="stagePlayerTabs" role="tablist" aria-label="参加プレイヤー選択"></div>
-        <div class="stage-player-stats" id="stagePlayerStats"></div>
+        <div class="sidebar-player-tabs" id="sidebarPlayerTabs" role="tablist" aria-label="参加プレイヤー選択"></div>
+        <div class="sidebar-player-detail">
+          <div id="sidebarPlayerList"></div>
+          <section class="sidebar-dice-box" aria-label="ダイスロール">
+            <div class="sidebar-skill-row">
+              <select id="sidebarSkillTemplateSelect" aria-label="技能テンプレート選択"><option value="">技能を選択</option></select>
+              <button type="button" id="sidebarSkillRollButton" title="技能判定" aria-label="技能判定">🎲</button>
+              <button type="button" id="sidebarSkillDeleteButton" title="技能を削除" aria-label="技能を削除">×</button>
+            </div>
+            <div class="sidebar-skill-form">
+              <input type="text" id="sidebarSkillNameInput" placeholder="技能名" maxlength="30">
+              <input type="number" id="sidebarSkillValueInput" min="1" max="100" placeholder="値">
+              <button type="button" id="sidebarSaveSkillTemplate" title="技能を保存" aria-label="技能を保存">＋</button>
+            </div>
+          </section>
+        </div>
       </section>
       <div class="panel log-panel">
         <div class="panel-heading">
@@ -266,6 +244,14 @@
     <button type="button" id="closeViewer" title="閉じる">×</button>
     <img id="viewerImage" src="" alt="拡大表示">
     <iframe id="viewerPdf" src="" title="PDF表示"></iframe>
+  </div>
+
+  <div class="pc-dice-result-modal" id="pcDiceResultModal" aria-hidden="true">
+    <div class="pc-dice-result-dialog" role="dialog" aria-modal="true" aria-labelledby="pcDiceResultTitle">
+      <p class="pc-dice-result-kicker">DICE RESULT</p>
+      <h2 id="pcDiceResultTitle">ダイス判定</h2>
+      <p id="pcDiceResultMessage"></p>
+    </div>
   </div>
 
   <!-- 確認ダイアログモーダル -->
@@ -301,16 +287,32 @@
         <button type="button" id="chooseAssetFile">ファイルから選ぶ</button>
       </div>
       <div class="asset-library-list" id="assetLibraryList"></div>
+      <section class="session-library-section" aria-labelledby="participantLibraryTitle">
+        <div class="session-library-heading">
+          <h3 id="participantLibraryTitle">参加者一覧</h3>
+          <button type="button" class="session-library-add" id="addLibraryParticipant">＋ 追加</button>
+        </div>
+        <div class="session-library-list" id="participantLibraryList"></div>
+      </section>
+      <section class="session-library-section" aria-labelledby="scenarioLibraryTitle">
+        <div class="session-library-heading">
+          <h3 id="scenarioLibraryTitle">シナリオ一覧</h3>
+          <button type="button" class="session-library-add" id="addLibraryScenario">＋ 追加</button>
+        </div>
+        <div class="session-library-list" id="scenarioLibraryList"></div>
+        <div class="scenario-library-editor" id="scenarioLibraryEditor" hidden>
+          <input class="scenario-library-title" id="scenarioLibraryTitleInput" type="text" placeholder="シナリオタイトル">
+          <div class="scenario-library-tabs" id="scenarioLibraryTabs"></div>
+          <div class="scenario-library-tools">
+            <button type="button" data-scenario-library-color="#e8edf0">白</button>
+            <button type="button" data-scenario-library-color="#eb8d7e">赤</button>
+            <button type="button" data-scenario-library-color="#91b9e8">青</button>
+          </div>
+          <div class="scenario-library-content" id="scenarioLibraryContent" contenteditable="true" data-placeholder="シナリオを入力..."></div>
+        </div>
+      </section>
+      <button type="button" class="data-invite-button" id="dataInviteButton">プレイヤー招待リンクをコピー</button>
       <button type="button" class="asset-source-cancel" id="closeAssetSource">閉じる</button>
-    </div>
-  </div>
-
-  <!-- 保存済みシーン一覧 -->
-  <div class="scene-preset-modal" id="scenePresetModal" aria-hidden="true">
-    <div class="scene-preset-dialog" role="dialog" aria-modal="true" aria-labelledby="scenePresetTitle">
-      <div class="confirm-title" id="scenePresetTitle">保存済みシーン</div>
-      <div class="scene-preset-list" id="scenePresetList"></div>
-      <button type="button" class="asset-source-cancel" id="closeScenePresets">閉じる</button>
     </div>
   </div>
 

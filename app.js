@@ -7,6 +7,7 @@ function normalizeRoomId(value) {
 }
 
 const storageKey = 'trpg-session-room-state';
+const participantAbilityKeys = ['STR', 'CON', 'POW', 'DEX', 'APP', 'SIZ', 'INT', 'EDU', 'LUK'];
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
 const requestedMode = urlParams.get('mode');
 const mode = requestedMode && ['pc', 'gm'].includes(requestedMode.toLowerCase())
@@ -19,6 +20,7 @@ const storedRoomId = normalizeRoomId(localStorage.getItem('trpg-session-room-id'
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
 if (mode === 'gm' && !roomParam && !storedRoomId) localStorage.setItem('trpg-session-room-id', visibilityRoomId);
 let applyingRemoteState = false;
+let remoteSyncTimer = null;
 
 const defaultState = {
   backgroundLayers: [],
@@ -33,21 +35,11 @@ const defaultState = {
   sizeBoxLayouts: {},
   layerGroups: [],
   skillTemplates: [],
-  scenePresets: [],
   bgm: { name: '', data: '', volume: 0.5 },
   bgmTracks: [],
   players: [],
-  logs: [
-    { time: '21:43', text: 'リナが灯台の扉に手をかけた。' },
-    { time: '21:39', text: 'GM <strong>霧の向こうに人影。</strong>' },
-    { time: '21:31', text: 'カイが〈観察〉に成功。' },
-    { time: '21:26', text: 'シーン「海岸線」を開始。' }
-  ],
-  scenarioTitle: '灰色港の灯台',
-  scenarioTabs: [
-    { id: 'scenario-intro', title: '導入', content: '防波堤の先にある古い灯台。入口は開いているが、中から潮の匂いがする。灯りがまたたくたび、霧の中に人影が増えていく。' }
-  ],
-  activeScenarioTabId: 'scenario-intro'
+  logs: [],
+  scenarios: [],
 };
 
 // ユーティリティ関数
@@ -84,16 +76,12 @@ function loadInitialState() {
 let state = loadInitialState();
 
 function sanitizeAndNormalizeState() {
-  const legacyScenarioNote = state.scenarioNote || state.sceneNote || defaultState.scenarioTabs[0].content;
-  state.scenarioTitle ||= defaultState.scenarioTitle;
-  state.scenarioTabs = Array.isArray(state.scenarioTabs) && state.scenarioTabs.length
-    ? state.scenarioTabs
-    : [{ id: `scenario-${Date.now()}`, title: '導入', content: legacyScenarioNote }];
-  state.activeScenarioTabId = state.scenarioTabs.some((tab) => tab.id === state.activeScenarioTabId)
-    ? state.activeScenarioTabId
-    : state.scenarioTabs[0].id;
   delete state.sceneNote;
   delete state.scenarioNote;
+  delete state.scenarioTitle;
+  delete state.scenarioTabs;
+  delete state.activeScenarioTabId;
+  state.scenarios = Array.isArray(state.scenarios) ? state.scenarios : [];
 
   // 内部データモデルの平準化
   state.clueImages ||= [];
@@ -104,38 +92,28 @@ function sanitizeAndNormalizeState() {
   state.sizeBoxLayouts ||= {};
   state.layerGroups ||= [];
   state.skillTemplates = Array.isArray(state.skillTemplates) ? state.skillTemplates : [];
-  state.scenePresets = Array.isArray(state.scenePresets) ? state.scenePresets : [];
   state.bgm = { name: '', data: '', volume: 0.5, ...(state.bgm || {}) };
   state.bgmTracks = Array.isArray(state.bgmTracks) ? state.bgmTracks : [];
   if (!state.bgmTracks.length && state.bgm.data) {
     state.bgmTracks.push({ id: `bgm-${Date.now()}`, name: state.bgm.name || 'BGM', data: state.bgm.data });
   }
 
-  const defaultPlayerAbilities = [
-    { STR: 50, CON: 55, POW: 60, DEX: 65, APP: 45, SIZ: 55, INT: 70, EDU: 60, LUK: 50 },
-    { STR: 70, CON: 65, POW: 48, DEX: 55, APP: 40, SIZ: 60, INT: 50, EDU: 45, LUK: 55 },
-    { STR: 40, CON: 45, POW: 62, DEX: 45, APP: 60, SIZ: 50, INT: 80, EDU: 75, LUK: 65 },
-    { STR: 55, CON: 60, POW: 71, DEX: 60, APP: 70, SIZ: 55, INT: 65, EDU: 55, LUK: 45 }
-  ];
-
-  state.players = (state.players || []).map((player, index) => ({
-    ...player,
-    abilities: { ...(defaultPlayerAbilities[index] || defaultPlayerAbilities[0]), ...(player.abilities || {}) },
-    skillTemplates: Array.isArray(player.skillTemplates) ? player.skillTemplates : []
-  }));
-
-  state.players = state.players.map((player) => {
-    const con = Number(player.abilities.CON) || 0;
-    const siz = Number(player.abilities.SIZ) || 0;
-    return {
-      ...player,
-      currentHP: player.currentHP ?? (con + siz) / 10,
-      currentSAN: player.currentSAN ?? (player.abilities.POW ?? '')
-    };
+  state.players = (state.players || []).map((player) => {
+    const participant = { ...player };
+    participant.abilities = participantAbilityKeys.reduce((abilities, key) => {
+      abilities[key] = participant.abilities?.[key] ?? '';
+      return abilities;
+    }, {});
+    const con = Number(participant.abilities.CON) || 0;
+    const siz = Number(participant.abilities.SIZ) || 0;
+    const pow = Number(participant.abilities.POW) || 0;
+    participant.currentHP ??= (con + siz) / 10;
+    participant.currentSAN ??= pow;
+    participant.skillTemplates = Array.isArray(participant.skillTemplates) ? participant.skillTemplates : [];
+    return participant;
   });
-
-  const initialPlayerNames = new Set(['リナ・ノース', 'カイ・ルーン', 'ミレイユ', 'サラ・アッシュ']);
-  state.players = state.players.filter((player) => !initialPlayerNames.has(player.name));
+  const legacyPlayerNames = new Set(['リナ・ノース', 'カイ・ルーン', 'ミレイユ', 'サラ・アッシュ']);
+  state.players = state.players.filter((player) => !legacyPlayerNames.has(player.name));
 
   state.backgroundLayers = (state.backgroundLayers || [])
     .map((layer) => ({ visible: true, order: 0, x: 50, y: 50, scale: state.backgroundScale, ...layer }))
@@ -167,14 +145,15 @@ function sanitizeAndNormalizeState() {
 
 sanitizeAndNormalizeState();
 
-const playerAbilityKeys = ['STR', 'CON', 'POW', 'DEX', 'APP', 'SIZ', 'INT', 'EDU', 'LUK'];
-
 visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
   roomId: visibilityRoomId,
   mode,
   state: mode === 'gm' ? state : undefined
 }));
 visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+visibilitySocket?.on('trpg_dice_result', (result) => {
+  if (mode === 'pc') showPcDiceResult(result);
+});
 visibilitySocket?.on('trpg_state', (remoteState) => {
   if (!remoteState || typeof remoteState !== 'object') return;
   applyingRemoteState = true;
@@ -190,7 +169,6 @@ let selectedGroupId = null;
 let selectedBackgroundLayerId = null;
 let multiSelectOverlayIndexes = [];
 let activeSizeLayer = 'character';
-let activeStagePlayerIndex = 0;
 
 let pendingDeleteIndex = null;
 let pendingDeleteGroupId = null;
@@ -198,16 +176,26 @@ let pendingDeleteBackgroundLayerId = null;
 let pendingUngroupGroupId = null;
 let pendingGroupLayerCategory = null;
 let pendingAssetCategory = null;
+let activeLibraryScenarioIndex = 0;
+let activeSidebarPlayerIndex = 0;
 
 function save() {
   localStorage.setItem(storageKey, JSON.stringify(state));
-  if (mode === 'gm' && !applyingRemoteState) {
-    visibilitySocket?.emit('trpg_state_update', { roomId: visibilityRoomId, state });
-  }
+  syncRemoteState();
   const saveState = $('#saveState');
   if (saveState) {
     saveState.textContent = '● 保存済み';
     saveState.style.color = 'var(--teal)';
+  }
+}
+
+function syncRemoteState() {
+  if (mode === 'gm' && !applyingRemoteState) {
+    if (remoteSyncTimer) window.clearTimeout(remoteSyncTimer);
+    remoteSyncTimer = window.setTimeout(() => {
+      visibilitySocket?.emit('trpg_state_update', { roomId: visibilityRoomId, state });
+      remoteSyncTimer = null;
+    }, 50);
   }
 }
 
@@ -248,10 +236,12 @@ function importStateFromJson(file) {
 
 function renderBgm() {
   const audio = $('#bgmAudio');
+  const controls = $('#bgmControls');
   const select = $('#bgmSelect');
   const trackList = $('#bgmTrackList');
   const playToggle = $('#bgmPlayToggle');
   const volume = $('#bgmVolume');
+  if (controls) controls.classList.toggle('is-empty', !state.bgm.data && !state.bgmTracks.length);
   if (select) {
     select.innerHTML = '<option value="">BGMなし</option>' + state.bgmTracks
       .map((track) => `<option value="${escapeHtml(track.id)}">${escapeHtml(track.name)}</option>`)
@@ -335,6 +325,46 @@ function applyPcBoardVisibility(hidden) {
   document.body.classList.toggle('pc-board-hidden', mode === 'pc' && hidden);
 }
 
+function applyPcDiceVisibility(hidden) {
+  document.body.classList.toggle('pc-dice-hidden', mode === 'pc' && hidden);
+}
+
+function showPcDiceResult(result = {}) {
+  const modal = $('#pcDiceResultModal');
+  const title = $('#pcDiceResultTitle');
+  const message = $('#pcDiceResultMessage');
+  if (!modal || !title || !message) return;
+  modal.classList.remove('result-critical', 'result-extreme', 'result-hard', 'result-success', 'result-failure', 'result-fumble');
+  if (result.resultClass) modal.classList.add(`result-${result.resultClass}`);
+  title.textContent = result.title || 'ダイス判定';
+  message.textContent = result.message || '';
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function getResultClass(result) {
+  return {
+    クリティカル: 'critical',
+    エクストリーム成功: 'extreme',
+    ハード成功: 'hard',
+    成功: 'success',
+    失敗: 'failure',
+    ファンブル: 'fumble'
+  }[result] || null;
+}
+
+function closePcDiceResult() {
+  const modal = $('#pcDiceResultModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+function notifyDiceResult(result) {
+  if (mode === 'gm') visibilitySocket?.emit('trpg_dice_result', { roomId: visibilityRoomId, ...result });
+  if (mode === 'pc') showPcDiceResult(result);
+}
+
 function setPcBoardVisibility(hidden) {
   localStorage.setItem(pcBoardHiddenKey, hidden ? 'true' : 'false');
   boardVisibilityChannel?.postMessage({ hidden });
@@ -410,120 +440,6 @@ function applyMode() {
   applyPcBoardVisibility(localStorage.getItem(pcBoardHiddenKey) === 'true');
 }
 
-function renderPlayers() {
-  const el = $('#playerList');
-  if (!el) return;
-  el.innerHTML = state.players.map((player, index) => {
-    const abilities = player.abilities || {};
-    const abilityEditor = playerAbilityKeys.map((key) =>
-      `<label><span>${escapeHtml(key)}</span><input type="text" value="${escapeHtml(abilities[key] ?? '')}" data-player-index="${index}" data-ability-key="${escapeHtml(key)}" aria-label="${escapeHtml(player.name)} ${escapeHtml(key)}"></label>`
-    ).join('');
-    return `<div class="player-card">
-      <div class="player">
-      <div class="avatar" style="background:${escapeHtml(player.color || '#6b8f8a')}">${escapeHtml(player.initials || 'PC')}</div>
-      <div class="player-name">${escapeHtml(player.name)}</div>
-      <i class="presence"></i>
-      </div>
-      <div class="player-ability-editor gm-only">${abilityEditor}</div>
-    </div>`;
-  }).join('');
-}
-
-function renderStagePlayerStats() {
-  const tabs = $('#stagePlayerTabs');
-  const el = $('#stagePlayerStats');
-  if (!el) return;
-  if (!state.players.length) {
-    if (tabs) tabs.innerHTML = '';
-    el.innerHTML = '<div class="category-layer-empty">参加者未登録</div>';
-    return;
-  }
-  activeStagePlayerIndex = Math.min(activeStagePlayerIndex, state.players.length - 1);
-  if (tabs) {
-    tabs.innerHTML = state.players.length > 1 ? state.players.map((player, index) =>
-      `<button type="button" class="stage-player-tab ${index === activeStagePlayerIndex ? 'active' : ''}" data-stage-player-index="${index}" role="tab" aria-selected="${index === activeStagePlayerIndex}">${escapeHtml(player.name)}</button>`
-    ).join('') : '';
-  }
-  const player = state.players[activeStagePlayerIndex];
-  el.innerHTML = [player].map((p) => {
-    const abilities = p.abilities || {};
-    const con = Number(abilities.CON) || 0;
-    const siz = Number(abilities.SIZ) || 0;
-    const hitPoints = p.currentHP ?? (con + siz) / 10;
-    const sanity = p.currentSAN ?? (abilities.POW ?? '');
-    const skillOptions = (p.skillTemplates || [])
-      .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)} (${escapeHtml(template.value)})</option>`)
-      .join('');
-    return `<article class="stage-player-card">
-      <div class="stage-player-name"><span class="avatar" style="background:${escapeHtml(p.color || '#6b8f8a')}">${escapeHtml(p.initials || 'PC')}</span><strong>${escapeHtml(p.name)}</strong></div>
-      <div class="stage-ability-grid">
-        <label><b>HP</b><span class="sidebar-stat-display">${escapeHtml(hitPoints)}</span><input class="gm-only sidebar-stat-input" type="number" min="0" step="1" value="${escapeHtml(hitPoints)}" data-player-index="${state.players.indexOf(p)}" data-current-stat="currentHP" aria-label="${escapeHtml(p.name)} HP"></label>
-        <label><b>SAN</b><span class="sidebar-stat-display">${escapeHtml(sanity)}</span><input class="gm-only sidebar-stat-input" type="number" min="0" step="1" value="${escapeHtml(sanity)}" data-player-index="${state.players.indexOf(p)}" data-current-stat="currentSAN" aria-label="${escapeHtml(p.name)} SAN"></label>
-      </div>
-      <div class="player-skill-roll" data-player-index="${state.players.indexOf(p)}">
-        <div class="player-skill-picker"><select data-player-skill-select aria-label="${escapeHtml(p.name)}の技能"><option value="">技能を選択</option>${skillOptions}</select><button type="button" data-player-skill-roll title="技能判定" aria-label="技能判定">🎲</button><button type="button" class="gm-only player-skill-delete" data-player-skill-delete title="技能を削除" aria-label="技能を削除">×</button></div>
-        <div class="gm-only player-skill-editor"><input type="text" data-player-skill-name placeholder="技能名" maxlength="30"><input type="number" data-player-skill-value min="1" max="100" placeholder="値"><button type="button" data-player-skill-save title="技能を保存" aria-label="技能を保存">＋</button></div>
-      </div>
-    </article>`;
-  }).join('');
-}
-
-function getActiveScenarioTab() {
-  return state.scenarioTabs.find((tab) => tab.id === state.activeScenarioTabId) || state.scenarioTabs[0];
-}
-
-function sanitizeScenarioHtml(html) {
-  const template = document.createElement('template');
-  template.innerHTML = html || '';
-  const allowedColors = new Set(['#e8edf0', '#eb8d7e', '#91b9e8']);
-  const colorAliases = new Map([
-    ['rgb(232, 237, 240)', '#e8edf0'],
-    ['rgb(235, 141, 126)', '#eb8d7e'],
-    ['rgb(145, 185, 232)', '#91b9e8']
-  ]);
-  template.content.querySelectorAll('*').forEach((element) => {
-    if (element.tagName === 'BR') return;
-    if (element.tagName !== 'SPAN' && element.tagName !== 'FONT') {
-      element.replaceWith(...element.childNodes);
-      return;
-    }
-    if (element.tagName === 'FONT' && element.getAttribute('color')) {
-      const legacyColor = element.getAttribute('color').toLowerCase();
-      if (allowedColors.has(legacyColor)) element.style.color = legacyColor;
-    }
-    const normalizedColor = colorAliases.get(element.style.color.toLowerCase()) || element.style.color.toLowerCase();
-    if (!allowedColors.has(normalizedColor)) {
-      element.replaceWith(...element.childNodes);
-      return;
-    }
-    element.removeAttribute('color');
-    element.removeAttribute('face');
-    element.removeAttribute('size');
-    element.removeAttribute('class');
-    element.setAttribute('style', `color: ${normalizedColor}`);
-  });
-  return template.innerHTML;
-}
-
-function renderScenario() {
-  const activeTab = getActiveScenarioTab();
-  const titleInput = $('#scenarioTitleInput');
-  if (titleInput) titleInput.value = state.scenarioTitle || '';
-
-  const tabs = $('#scenarioTabs');
-  if (tabs) {
-    tabs.innerHTML = state.scenarioTabs.map((tab) =>
-      `<div class="scenario-tab-item" draggable="true" data-scenario-tab-id="${escapeHtml(tab.id)}">
-        <button type="button" class="scenario-tab ${tab.id === activeTab?.id ? 'active' : ''}" role="tab" aria-selected="${tab.id === activeTab?.id}">${escapeHtml(tab.title)}</button>
-        <button type="button" class="scenario-tab-delete gm-only" data-scenario-action="delete" title="タブを削除" aria-label="${escapeHtml(tab.title)}を削除">×</button>
-      </div>`
-    ).join('');
-  }
-
-  const note = $('#scenarioNote');
-  if (note) note.innerHTML = sanitizeScenarioHtml(activeTab?.content || '');
-}
-
 function renderLogs() {
   const el = $('#logList');
   if (!el) return;
@@ -535,7 +451,71 @@ function renderLogs() {
   ).join('');
 }
 
+function renderSidebarPlayers() {
+  const tabs = $('#sidebarPlayerTabs');
+  const list = $('#sidebarPlayerList');
+  if (!list) return;
+  activeSidebarPlayerIndex = Math.min(activeSidebarPlayerIndex, Math.max(0, state.players.length - 1));
+  if (tabs) {
+    tabs.innerHTML = state.players.length > 1
+      ? state.players.map((player, index) => `<button type="button" class="sidebar-player-tab ${index === activeSidebarPlayerIndex ? 'active' : ''}" data-sidebar-player-tab="${index}" role="tab" aria-selected="${index === activeSidebarPlayerIndex}">${escapeHtml(player.name || '名前未設定')}</button>`).join('')
+      : '';
+  }
+  const visiblePlayers = state.players.length > 1
+    ? [state.players[activeSidebarPlayerIndex]]
+    : state.players;
+  list.innerHTML = visiblePlayers.length
+    ? visiblePlayers.map((player) => {
+      const index = state.players.indexOf(player);
+      return `<article class="sidebar-player-card">
+        <div class="sidebar-player-name"><span class="avatar" style="background:${escapeHtml(player.color || '#6b8f8a')}">${escapeHtml(player.initials || 'PC')}</span><strong>${escapeHtml(player.name || '名前未設定')}</strong><i></i></div>
+        <div class="sidebar-player-stats">
+          <label>HP<input type="number" min="0" value="${escapeHtml(player.currentHP ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentHP"></label>
+          <label>SAN<input type="number" min="0" value="${escapeHtml(player.currentSAN ?? 0)}" data-sidebar-player-index="${index}" data-sidebar-stat="currentSAN"></label>
+        </div>
+      </article>`;
+    }).join('')
+    : '<div class="category-layer-empty">参加者未登録</div>';
+  renderSidebarSkillTemplates();
+}
+
+function renderSessionLibraryLists() {
+  const participantList = $('#participantLibraryList');
+  const scenarioList = $('#scenarioLibraryList');
+  if (participantList) {
+    participantList.innerHTML = state.players.length
+      ? state.players.map((player, index) => `<div class="session-library-item participant-library-item"><div class="participant-library-main"><span>${escapeHtml(player.name || '名前未設定')}</span><div class="participant-ability-grid">${participantAbilityKeys.map((key) => `<label><small>${key}</small><input type="text" value="${escapeHtml(player.abilities?.[key] ?? '')}" data-library-participant-index="${index}" data-library-ability-key="${key}" aria-label="${escapeHtml(player.name || '参加者')} ${key}"></label>`).join('')}</div></div><button type="button" data-library-participant-delete="${index}" aria-label="参加者を削除">×</button></div>`).join('')
+      : '<span class="category-layer-empty">参加者が登録されていません</span>';
+  }
+  if (scenarioList) {
+    scenarioList.innerHTML = state.scenarios.length
+      ? state.scenarios.map((scenario, index) => `<div class="session-library-item ${index === activeLibraryScenarioIndex ? 'active' : ''}" data-library-scenario-index="${index}"><span><b>${escapeHtml(scenario.title || '無題のシナリオ')}</b></span><button type="button" data-library-scenario-delete="${index}" aria-label="シナリオを削除">×</button></div>`).join('')
+      : '<span class="category-layer-empty">シナリオが登録されていません</span>';
+  }
+  const editor = $('#scenarioLibraryEditor');
+  const titleInput = $('#scenarioLibraryTitleInput');
+  const content = $('#scenarioLibraryContent');
+  const tabs = $('#scenarioLibraryTabs');
+  const scenario = state.scenarios[activeLibraryScenarioIndex];
+  if (editor && titleInput && content && tabs) {
+    editor.hidden = !scenario;
+    if (scenario) {
+      titleInput.value = scenario.title || '';
+      content.innerHTML = scenario.content || '';
+      tabs.innerHTML = state.scenarios.map((entry, index) => `<button type="button" class="${index === activeLibraryScenarioIndex ? 'active' : ''}" data-library-scenario-tab="${index}">${escapeHtml(entry.title || '無題')}</button>`).join('');
+    }
+  }
+}
+
 function getAssetLibrary(category) {
+  if (category === 'all') {
+    return [
+      ...getAssetLibrary('character').map((asset) => ({ ...asset, category: 'character' })),
+      ...getAssetLibrary('material').map((asset) => ({ ...asset, category: 'material' })),
+      ...getAssetLibrary('icon').map((asset) => ({ ...asset, category: 'icon' })),
+      ...getAssetLibrary('background').map((asset) => ({ ...asset, category: 'background' }))
+    ];
+  }
   if (category === 'background') {
     return state.backgroundLayers.filter((layer) => layer.data).map((layer) => ({ name: layer.name || '背景画像', type: 'image', data: layer.data }));
   }
@@ -550,6 +530,7 @@ function closeAssetSourceModal() {
   pendingAssetCategory = null;
   const modal = $('#assetSourceModal');
   if (modal) {
+    modal.classList.remove('session-library-open');
     modal.classList.remove('open');
     modal.setAttribute('aria-hidden', 'true');
   }
@@ -561,10 +542,19 @@ function openAssetSourceModal(category) {
   const list = $('#assetLibraryList');
   const title = $('#assetSourceTitle');
   if (!modal || !list) return;
-  if (title) title.textContent = `${{ character: 'キャラクター', material: '資料', icon: 'アイコン', background: '背景' }[category] || '素材'}を追加`;
+  modal.classList.toggle('session-library-open', category === 'all');
+  if (title) title.textContent = category === 'all'
+    ? '素材一覧'
+    : `${{ character: 'キャラクター', material: '資料', icon: 'アイコン', background: '背景' }[category] || '素材'}を追加`;
+  const chooseFileButton = $('#chooseAssetFile');
+  if (chooseFileButton) chooseFileButton.hidden = category === 'all';
+  document.querySelectorAll('.session-library-section').forEach((section) => {
+    section.hidden = category !== 'all';
+  });
+  renderSessionLibraryLists();
   const assets = getAssetLibrary(category);
   list.innerHTML = assets.length ? assets.map((asset, index) =>
-    `<button type="button" class="asset-library-item" data-library-index="${index}"><img src="${asset.data}" alt="${escapeHtml(asset.name || '素材')}" loading="lazy"><span>${escapeHtml(asset.name || '素材')}</span></button>`
+    `<button type="button" class="asset-library-item" data-library-index="${index}" data-library-category="${escapeHtml(asset.category || category)}"><img src="${asset.data}" alt="${escapeHtml(asset.name || '素材')}" loading="lazy"><span>${escapeHtml(asset.name || '素材')}</span></button>`
   ).join('') : '<div class="category-layer-empty">保存済み素材がありません</div>';
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
@@ -584,70 +574,32 @@ function addSavedAsset(category, asset) {
   save();
 }
 
-function captureScenePreset(name) {
-  return {
-    id: `scene-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    name,
-    backgroundLayers: structuredClone(state.backgroundLayers),
-    backgroundLayerOrder: structuredClone(state.backgroundLayerOrder),
-    backgroundScale: state.backgroundScale,
-    backgroundDimming: structuredClone(state.backgroundDimming),
-    sceneOverlays: structuredClone(state.sceneOverlays),
-    layerGroups: structuredClone(state.layerGroups)
-  };
-}
-
-function closeScenePresetModal() {
-  const modal = $('#scenePresetModal');
-  if (modal) {
-    modal.classList.remove('open');
-    modal.setAttribute('aria-hidden', 'true');
-  }
-}
-
-function renderScenePresetList() {
-  const list = $('#scenePresetList');
-  if (!list) return;
-  list.innerHTML = state.scenePresets.length ? state.scenePresets.map((preset) =>
-    `<div class="scene-preset-item"><button type="button" data-scene-preset-id="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</button><button type="button" class="scene-preset-delete" data-scene-preset-delete="${escapeHtml(preset.id)}" title="シーンを削除" aria-label="シーンを削除">×</button></div>`
-  ).join('') : '<div class="category-layer-empty">保存済みシーンがありません</div>';
-}
-
-function openScenePresetModal() {
-  renderScenePresetList();
-  const modal = $('#scenePresetModal');
-  if (modal) {
-    modal.classList.add('open');
-    modal.setAttribute('aria-hidden', 'false');
-  }
-}
-
-function restoreScenePreset(preset) {
-  if (!preset) return;
-  state.backgroundLayers = structuredClone(preset.backgroundLayers || []);
-  state.backgroundLayerOrder = structuredClone(preset.backgroundLayerOrder || []);
-  state.backgroundScale = preset.backgroundScale ?? 100;
-  state.backgroundDimming = structuredClone(preset.backgroundDimming || { white: false, black: false });
-  state.sceneOverlays = structuredClone(preset.sceneOverlays || []);
-  state.layerGroups = structuredClone(preset.layerGroups || []);
-  selectedOverlayIndex = null;
-  selectedGroupId = null;
-  selectedBackgroundLayerId = null;
-  multiSelectOverlayIndexes = [];
-  renderImages();
-  renderBackgroundLayerList();
-  renderOverlayControls();
-  save();
-}
-
 function renderSkillTemplates() {
   const select = $('#skillTemplateSelect');
+  const deleteButton = $('#deleteSkillTemplate');
   if (!select) return;
   const selected = select.value;
-  select.innerHTML = '<option value="">技能を選択</option>' + state.skillTemplates
+  const san = state.players[activeSidebarPlayerIndex]?.currentSAN ?? 0;
+  const sanOption = mode === 'pc' ? `<option value="builtin-san">SAN (${escapeHtml(san)})</option>` : '';
+  select.innerHTML = '<option value="">技能を選択</option>' + sanOption + state.skillTemplates
     .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)} (${escapeHtml(template.value)})</option>`)
     .join('');
-  if (state.skillTemplates.some((template) => template.id === selected)) select.value = selected;
+  if (selected === 'builtin-san' || state.skillTemplates.some((template) => template.id === selected)) select.value = selected;
+  if (deleteButton) deleteButton.disabled = !select.value || select.value === 'builtin-san';
+}
+
+function renderSidebarSkillTemplates() {
+  const select = $('#sidebarSkillTemplateSelect');
+  const deleteButton = $('#sidebarSkillDeleteButton');
+  if (!select) return;
+  const player = state.players[activeSidebarPlayerIndex];
+  const skillTemplates = player?.skillTemplates || [];
+  const selected = select.value;
+  select.innerHTML = '<option value="">技能を選択</option>' + skillTemplates
+    .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)} (${escapeHtml(template.value)})</option>`)
+    .join('');
+  if (skillTemplates.some((template) => template.id === selected)) select.value = selected;
+  if (deleteButton) deleteButton.disabled = !select.value;
 }
 
 function getSkillResult(roll, successValue) {
@@ -1387,9 +1339,8 @@ function renderImages() {
 
 function render() {
   renderBgm();
-  renderScenario();
-  renderPlayers();
-  renderStagePlayerStats();
+  renderSidebarPlayers();
+  renderSidebarSkillTemplates();
   renderLogs();
   renderSkillTemplates();
   renderImages();
@@ -1487,6 +1438,7 @@ function startDraggingBackgroundLayer(event, layer) {
     layer.x = Math.max(0, Math.min(100, startPosition.x + deltaX));
     layer.y = Math.max(0, Math.min(100, startPosition.y + deltaY));
     renderOverlays();
+    syncRemoteState();
   };
 
   const stop = () => {
@@ -1531,6 +1483,7 @@ function startDraggingOverlay(event, image) {
         node.style.top = `${item.y}%`;
       }
     });
+    syncRemoteState();
   };
 
   const stop = () => {
@@ -1762,35 +1715,6 @@ function setupEventListeners() {
   $('#bgmAudio')?.addEventListener('play', renderBgm);
   $('#bgmAudio')?.addEventListener('pause', renderBgm);
 
-  $('#saveScenePreset')?.addEventListener('click', () => {
-    const name = window.prompt('保存するシーン名を入力してください');
-    if (!name?.trim()) return;
-    state.scenePresets.push(captureScenePreset(name.trim()));
-    save();
-  });
-
-  $('#openScenePresets')?.addEventListener('click', openScenePresetModal);
-  $('#closeScenePresets')?.addEventListener('click', closeScenePresetModal);
-  $('#scenePresetModal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'scenePresetModal') closeScenePresetModal();
-  });
-  $('#scenePresetList')?.addEventListener('click', (event) => {
-    const deleteButton = event.target.closest('[data-scene-preset-delete]');
-    if (deleteButton) {
-      const preset = state.scenePresets.find((entry) => entry.id === deleteButton.dataset.scenePresetDelete);
-      if (!preset || !window.confirm(`${preset.name} を削除しますか？`)) return;
-      state.scenePresets = state.scenePresets.filter((entry) => entry.id !== preset.id);
-      renderScenePresetList();
-      save();
-      return;
-    }
-    const restoreButton = event.target.closest('[data-scene-preset-id]');
-    if (!restoreButton) return;
-    const preset = state.scenePresets.find((entry) => entry.id === restoreButton.dataset.scenePresetId);
-    closeScenePresetModal();
-    restoreScenePreset(preset);
-  });
-
   document.querySelectorAll('[data-asset-category]').forEach((button) => {
     button.addEventListener('click', () => openAssetSourceModal(button.dataset.assetCategory));
   });
@@ -1805,7 +1729,7 @@ function setupEventListeners() {
     const item = event.target.closest('[data-library-index]');
     if (!item || !pendingAssetCategory) return;
     const assets = getAssetLibrary(pendingAssetCategory);
-    const category = pendingAssetCategory;
+    const category = item.dataset.libraryCategory || pendingAssetCategory;
     const asset = assets[Number(item.dataset.libraryIndex)];
     closeAssetSourceModal();
     addSavedAsset(category, asset);
@@ -1816,90 +1740,112 @@ function setupEventListeners() {
     if (event.target.id === 'assetSourceModal') closeAssetSourceModal();
   });
 
-  $('#scenarioTitleInput')?.addEventListener('input', (e) => {
-    state.scenarioTitle = e.target.value;
+  $('#addLibraryParticipant')?.addEventListener('click', () => {
+    const name = window.prompt('参加者の名前');
+    if (!name?.trim()) return;
+    state.players.push({
+      name: name.trim(),
+      initials: name.trim().slice(0, 2),
+      role: '参加者',
+      color: '#6b8f8a',
+      abilities: {},
+      skillTemplates: []
+    });
+    activeSidebarPlayerIndex = state.players.length - 1;
+    renderSessionLibraryLists();
+    renderSidebarPlayers();
     save();
   });
 
-  $('#scenarioTabs')?.addEventListener('click', (event) => {
-    const tabItem = event.target.closest('[data-scenario-tab-id]');
-    if (!tabItem) return;
-    if (event.target.closest('[data-scenario-action="delete"]')) {
-      if (state.scenarioTabs.length <= 1) return;
-      if (!window.confirm('このタブを削除しますか？')) return;
-      const deleteIndex = state.scenarioTabs.findIndex((tab) => tab.id === tabItem.dataset.scenarioTabId);
-      if (deleteIndex < 0) return;
-      state.scenarioTabs.splice(deleteIndex, 1);
-      if (state.activeScenarioTabId === tabItem.dataset.scenarioTabId) {
-        state.activeScenarioTabId = state.scenarioTabs[Math.max(0, deleteIndex - 1)].id;
-      }
-      renderScenario();
-      save();
+  $('#addLibraryScenario')?.addEventListener('click', () => {
+    const title = window.prompt('シナリオ名');
+    if (!title?.trim()) return;
+    const content = window.prompt('シナリオ概要（任意）', '') || '';
+    state.scenarios.push({ title: title.trim(), content: content.trim() });
+    renderSessionLibraryLists();
+    save();
+  });
+
+  $('#participantLibraryList')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-library-participant-delete]');
+    if (!button) return;
+    const deletedIndex = Number(button.dataset.libraryParticipantDelete);
+    state.players.splice(deletedIndex, 1);
+    if (deletedIndex <= activeSidebarPlayerIndex) activeSidebarPlayerIndex = Math.max(0, activeSidebarPlayerIndex - 1);
+    renderSessionLibraryLists();
+    renderSidebarPlayers();
+    save();
+  });
+
+  $('#sidebarPlayerTabs')?.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-sidebar-player-tab]');
+    if (!tab) return;
+    activeSidebarPlayerIndex = Number(tab.dataset.sidebarPlayerTab);
+    renderSidebarPlayers();
+    renderSkillTemplates();
+  });
+
+  $('#participantLibraryList')?.addEventListener('input', (event) => {
+    const input = event.target.closest('[data-library-participant-index][data-library-ability-key]');
+    if (!input) return;
+    const player = state.players[Number(input.dataset.libraryParticipantIndex)];
+    if (!player) return;
+    player.abilities ||= {};
+    player.abilities[input.dataset.libraryAbilityKey] = input.value;
+    const con = Number(player.abilities.CON) || 0;
+    const siz = Number(player.abilities.SIZ) || 0;
+    const pow = Number(player.abilities.POW) || 0;
+    player.currentHP = (con + siz) / 10;
+    player.currentSAN = pow;
+    renderSidebarPlayers();
+    renderSkillTemplates();
+    save();
+  });
+
+  $('#scenarioLibraryList')?.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-library-scenario-index]');
+    if (item && !event.target.closest('[data-library-scenario-delete]')) {
+      activeLibraryScenarioIndex = Number(item.dataset.libraryScenarioIndex);
+      renderSessionLibraryLists();
       return;
     }
-    state.activeScenarioTabId = tabItem.dataset.scenarioTabId;
-    renderScenario();
+    const button = event.target.closest('[data-library-scenario-delete]');
+    if (!button) return;
+    state.scenarios.splice(Number(button.dataset.libraryScenarioDelete), 1);
+    activeLibraryScenarioIndex = Math.min(activeLibraryScenarioIndex, Math.max(0, state.scenarios.length - 1));
+    renderSessionLibraryLists();
     save();
   });
 
-  $('#scenarioTabs')?.addEventListener('dragstart', (event) => {
-    const tabItem = event.target.closest('[data-scenario-tab-id]');
-    if (!tabItem) return;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', tabItem.dataset.scenarioTabId);
-    tabItem.classList.add('dragging');
+  $('#scenarioLibraryTabs')?.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-library-scenario-tab]');
+    if (!tab) return;
+    activeLibraryScenarioIndex = Number(tab.dataset.libraryScenarioTab);
+    renderSessionLibraryLists();
   });
 
-  $('#scenarioTabs')?.addEventListener('dragover', (event) => {
-    const tabItem = event.target.closest('[data-scenario-tab-id]');
-    if (!tabItem) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-  });
-
-  $('#scenarioTabs')?.addEventListener('drop', (event) => {
-    const targetItem = event.target.closest('[data-scenario-tab-id]');
-    if (!targetItem) return;
-    event.preventDefault();
-    const sourceId = event.dataTransfer.getData('text/plain');
-    if (!sourceId || sourceId === targetItem.dataset.scenarioTabId) return;
-    const sourceIndex = state.scenarioTabs.findIndex((tab) => tab.id === sourceId);
-    const targetIndex = state.scenarioTabs.findIndex((tab) => tab.id === targetItem.dataset.scenarioTabId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-    const [movedTab] = state.scenarioTabs.splice(sourceIndex, 1);
-    state.scenarioTabs.splice(targetIndex, 0, movedTab);
-    renderScenario();
+  $('#scenarioLibraryTitleInput')?.addEventListener('input', (event) => {
+    const scenario = state.scenarios[activeLibraryScenarioIndex];
+    if (!scenario) return;
+    scenario.title = event.target.value;
+    const activeItem = document.querySelector(`[data-library-scenario-index="${activeLibraryScenarioIndex}"] b`);
+    if (activeItem) activeItem.textContent = scenario.title || '無題のシナリオ';
     save();
   });
 
-  $('#scenarioTabs')?.addEventListener('dragend', (event) => {
-    event.target.closest('[data-scenario-tab-id]')?.classList.remove('dragging');
-  });
-
-  $('#addScenarioTab')?.addEventListener('click', () => {
-    const title = window.prompt('タブ名を入力してください', '新しい場面');
-    if (!title?.trim()) return;
-    const tab = { id: `scenario-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, title: title.trim(), content: '' };
-    state.scenarioTabs.push(tab);
-    state.activeScenarioTabId = tab.id;
-    renderScenario();
-    save();
-    $('#scenarioNote')?.focus();
-  });
-
-  $('#scenarioNote')?.addEventListener('input', (e) => {
-    const activeTab = getActiveScenarioTab();
-    if (!activeTab) return;
-    activeTab.content = sanitizeScenarioHtml(e.target.innerHTML);
+  $('#scenarioLibraryContent')?.addEventListener('input', (event) => {
+    const scenario = state.scenarios[activeLibraryScenarioIndex];
+    if (!scenario) return;
+    scenario.content = event.target.innerHTML;
     save();
   });
 
-  document.querySelectorAll('[data-scenario-color]').forEach((button) => {
+  document.querySelectorAll('[data-scenario-library-color]').forEach((button) => {
     button.addEventListener('mousedown', (event) => event.preventDefault());
     button.addEventListener('click', () => {
-      $('#scenarioNote')?.focus();
-      document.execCommand('foreColor', false, button.dataset.scenarioColor);
-      $('#scenarioNote')?.dispatchEvent(new Event('input', { bubbles: true }));
+      $('#scenarioLibraryContent')?.focus();
+      document.execCommand('foreColor', false, button.dataset.scenarioLibraryColor);
+      $('#scenarioLibraryContent')?.dispatchEvent(new Event('input', { bubbles: true }));
     });
   });
 
@@ -1932,7 +1878,7 @@ function setupEventListeners() {
   });
 
   $('#placeCharacterButton')?.addEventListener('click', () => {
-    if (state.characterImage) addOverlay({ name: 'リナ・ノース', data: state.characterImage, layer: 'character' });
+    if (state.characterImage) addOverlay({ name: 'キャラクター', data: state.characterImage, layer: 'character' });
   });
 
   $('#clueUpload')?.addEventListener('change', (e) => readImages(e.target.files, 'clueImages'));
@@ -1947,15 +1893,19 @@ function setupEventListeners() {
     if (e.key === 'Escape') closeViewer();
   });
 
-  $('#rollButton')?.addEventListener('click', () => {
-    const count = Number($('#diceCount')?.value || 1);
-    const sides = Number($('#diceSides')?.value || 6);
-    const modifier = Number($('#diceModifier')?.value) || 0;
-    const secret = Boolean($('#secretDice')?.checked);
+  $('#pcDiceResultModal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'pcDiceResultModal') closePcDiceResult();
+  });
+
+  const rollDice = (prefix, resultSelector) => {
+    const count = Number($(`#${prefix}DiceCount`)?.value || 1);
+    const sides = Number($(`#${prefix}DiceSides`)?.value || 6);
+    const modifier = Number($(`#${prefix}DiceModifier`)?.value) || 0;
+    const secret = prefix === '' && Boolean($('#secretDice')?.checked);
     const rolls = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
     const total = rolls.reduce((sum, value) => sum + value, 0) + modifier;
 
-    const resEl = $('#rollResult');
+    const resEl = $(resultSelector);
     if (resEl) {
       resEl.innerHTML = `<span>RESULT</span><strong>${total}</strong><small>${rolls.join(' + ')}${modifier ? ` ${modifier > 0 ? '+' : '-'}${Math.abs(modifier)}` : ''} = ${total}</small>`;
     }
@@ -1969,14 +1919,93 @@ function setupEventListeners() {
     state.logs = state.logs.slice(0, 8);
     renderLogs();
     save();
+    notifyDiceResult({
+      title: secret ? '秘密のダイス' : 'ダイス判定',
+      message: secret ? '秘密のダイスが振られました。' : `${count}d${sides}${modifier ? ` ${modifier > 0 ? '+' : ''}${modifier}` : ''} = ${total}`
+    });
+  };
+
+  $('#rollButton')?.addEventListener('click', () => rollDice('', '#rollResult'));
+  const saveSkillTemplate = (nameSelector, valueSelector) => {
+    const name = $(nameSelector)?.value.trim() || '';
+    const value = Number($(valueSelector)?.value);
+    if (!name || !Number.isInteger(value) || value < 1 || value > 100) return;
+    const existing = state.skillTemplates.find((template) => template.name === name);
+    if (existing) existing.value = value;
+    else state.skillTemplates.push({ id: `skill-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, name, value });
+    renderSkillTemplates();
+    renderSidebarSkillTemplates();
+    save();
+  };
+
+  $('#sidebarSkillTemplateSelect')?.addEventListener('change', (event) => {
+    const player = state.players[activeSidebarPlayerIndex];
+    const template = player?.skillTemplates?.find((entry) => entry.id === event.target.value);
+    $('#sidebarSkillNameInput').value = template?.name || '';
+    $('#sidebarSkillValueInput').value = template?.value || '';
+    $('#sidebarSkillDeleteButton').disabled = !template;
+  });
+
+  $('#sidebarSaveSkillTemplate')?.addEventListener('click', () => {
+    const player = state.players[activeSidebarPlayerIndex];
+    if (!player) return;
+    const name = $('#sidebarSkillNameInput')?.value.trim() || '';
+    const value = Number($('#sidebarSkillValueInput')?.value);
+    if (!name || !Number.isInteger(value) || value < 1 || value > 100) return;
+    player.skillTemplates ||= [];
+    const existing = player.skillTemplates.find((template) => template.name === name);
+    if (existing) existing.value = value;
+    else player.skillTemplates.push({ id: `player-skill-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, name, value });
+    renderSidebarSkillTemplates();
+    const saved = player.skillTemplates.find((template) => template.name === name);
+    if (saved) $('#sidebarSkillTemplateSelect').value = saved.id;
+    save();
+  });
+  $('#sidebarSkillRollButton')?.addEventListener('click', () => {
+    const player = state.players[activeSidebarPlayerIndex];
+    const template = player?.skillTemplates?.find((entry) => entry.id === $('#sidebarSkillTemplateSelect')?.value);
+    if (!template) return;
+    const roll = Math.floor(Math.random() * 100) + 1;
+    const result = getSkillResult(roll, template.value);
+    state.logs.unshift({ time: nowTime(), text: `<strong>技能判定</strong> ${escapeHtml(template.name)}: ${roll} / ${template.value} → ${result}` });
+    state.logs = state.logs.slice(0, 8);
+    renderLogs();
+    save();
+    notifyDiceResult({ title: template.name, message: result, resultClass: getResultClass(result) });
+  });
+
+  $('#sidebarSkillDeleteButton')?.addEventListener('click', () => {
+    const player = state.players[activeSidebarPlayerIndex];
+    const select = $('#sidebarSkillTemplateSelect');
+    if (!player || !select?.value) return;
+    const skillIndex = player.skillTemplates?.findIndex((entry) => entry.id === select.value) ?? -1;
+    if (skillIndex < 0) return;
+    player.skillTemplates.splice(skillIndex, 1);
+    $('#sidebarSkillNameInput').value = '';
+    $('#sidebarSkillValueInput').value = '';
+    renderSidebarSkillTemplates();
+    save();
+  });
+
+  $('#sidebarPlayerList')?.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-sidebar-player-index][data-sidebar-stat]');
+    if (!input) return;
+    const player = state.players[Number(input.dataset.sidebarPlayerIndex)];
+    if (!player) return;
+    player[input.dataset.sidebarStat] = Math.max(0, Number(input.value) || 0);
+    renderSidebarPlayers();
+    save();
   });
 
   $('#skillTemplateSelect')?.addEventListener('change', (event) => {
+    const isSan = event.target.value === 'builtin-san';
     const template = state.skillTemplates.find((entry) => entry.id === event.target.value);
     const nameInput = $('#skillNameInput');
     const valueInput = $('#skillValueInput');
-    if (nameInput) nameInput.value = template?.name || '';
-    if (valueInput) valueInput.value = template?.value || '';
+    if (nameInput) nameInput.value = isSan ? 'SAN' : (template?.name || '');
+    if (valueInput) valueInput.value = isSan ? (state.players[activeSidebarPlayerIndex]?.currentSAN ?? 0) : (template?.value || '');
+    const deleteButton = $('#deleteSkillTemplate');
+    if (deleteButton) deleteButton.disabled = isSan || !template;
   });
 
   $('#saveSkillTemplate')?.addEventListener('click', () => {
@@ -2003,25 +2032,45 @@ function setupEventListeners() {
 
   $('#skillRollButton')?.addEventListener('click', () => {
     const select = $('#skillTemplateSelect');
+    const isSan = select?.value === 'builtin-san';
     const template = state.skillTemplates.find((entry) => entry.id === select?.value);
-    if (!template) return;
+    if (!template && !isSan) return;
+    const skillName = isSan ? 'SAN' : template.name;
+    const skillValue = isSan ? Number(state.players[activeSidebarPlayerIndex]?.currentSAN) || 0 : template.value;
     const roll = Math.floor(Math.random() * 100) + 1;
-    const result = getSkillResult(roll, template.value);
+    const result = getSkillResult(roll, skillValue);
     const secret = Boolean($('#secretDice')?.checked);
     const resEl = $('#rollResult');
     if (resEl) {
-      resEl.innerHTML = `<span>${escapeHtml(template.name)}</span><strong>${roll}</strong><small>${result} / 成功値 ${template.value}</small>`;
+      resEl.innerHTML = `<span>${escapeHtml(skillName)}</span><strong>${roll}</strong><small>${result} / 成功値 ${skillValue}</small>`;
     }
     state.logs.unshift({
       time: nowTime(),
       text: secret
-        ? `<strong>秘密の技能判定</strong> ${escapeHtml(template.name)}: ${result} (${roll})`
-        : `<strong>技能判定</strong> ${escapeHtml(template.name)}: ${roll} / ${template.value} → ${result}`,
+        ? `<strong>秘密の技能判定</strong> ${escapeHtml(skillName)} が行われました。`
+        : `<strong>技能判定</strong> ${escapeHtml(skillName)}: ${roll} / ${skillValue} → ${result}`,
       secret,
-      playerText: `<strong>秘密の技能判定</strong> ${escapeHtml(template.name)} が行われました。`
+      playerText: `<strong>秘密の技能判定</strong> ${escapeHtml(skillName)} が行われました.`
     });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
+    save();
+    notifyDiceResult({
+      title: secret ? '秘密の技能判定' : skillName,
+      message: secret ? '秘密の技能判定が行われました。' : result,
+      resultClass: secret ? null : getResultClass(result)
+    });
+  });
+
+  $('#deleteSkillTemplate')?.addEventListener('click', () => {
+    const select = $('#skillTemplateSelect');
+    if (!select?.value) return;
+    const skillIndex = state.skillTemplates.findIndex((template) => template.id === select.value);
+    if (skillIndex < 0) return;
+    state.skillTemplates.splice(skillIndex, 1);
+    $('#skillNameInput').value = '';
+    $('#skillValueInput').value = '';
+    renderSkillTemplates();
     save();
   });
 
@@ -2042,106 +2091,12 @@ function setupEventListeners() {
     save();
   });
 
-  $('#playerList')?.addEventListener('input', (event) => {
-    const input = event.target.closest('[data-player-index][data-ability-key]');
-    if (!input) return;
-    const player = state.players[Number(input.dataset.playerIndex)];
-    if (!player) return;
-    player.abilities ||= {};
-    player.abilities[input.dataset.abilityKey] = input.value;
-    renderStagePlayerStats();
-    save();
-  });
-
-  $('#stagePlayerStats')?.addEventListener('change', (event) => {
-    const input = event.target.closest('[data-player-index][data-current-stat]');
-    if (!input || mode === 'pc') return;
-    const player = state.players[Number(input.dataset.playerIndex)];
-    if (!player) return;
-    const value = Number(input.value);
-    if (!Number.isFinite(value) || value < 0) return;
-    player[input.dataset.currentStat] = value;
-    renderStagePlayerStats();
-    save();
-  });
-
-  $('#stagePlayerTabs')?.addEventListener('click', (event) => {
-    const tab = event.target.closest('[data-stage-player-index]');
-    if (!tab) return;
-    activeStagePlayerIndex = Number(tab.dataset.stagePlayerIndex);
-    renderStagePlayerStats();
-  });
-
-  $('#stagePlayerStats')?.addEventListener('click', (event) => {
-    const container = event.target.closest('[data-player-index]');
-    if (!container) return;
-    const player = state.players[Number(container.dataset.playerIndex)];
-    if (!player) return;
-
-    if (event.target.closest('[data-player-skill-save]')) {
-      const nameInput = container.querySelector('[data-player-skill-name]');
-      const valueInput = container.querySelector('[data-player-skill-value]');
-      const name = nameInput?.value.trim() || '';
-      const value = Number(valueInput?.value);
-      if (!name || !Number.isInteger(value) || value < 1 || value > 100) return;
-      const existing = player.skillTemplates.find((template) => template.name === name);
-      if (existing) existing.value = value;
-      else player.skillTemplates.push({ id: `player-skill-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, name, value });
-      renderStagePlayerStats();
-      save();
-      return;
-    }
-
-    if (event.target.closest('[data-player-skill-delete]')) {
-      const select = container.querySelector('[data-player-skill-select]');
-      const templateIndex = player.skillTemplates.findIndex((entry) => entry.id === select?.value);
-      if (templateIndex < 0) return;
-      if (!window.confirm(`${player.skillTemplates[templateIndex].name} を削除しますか？`)) return;
-      player.skillTemplates.splice(templateIndex, 1);
-      renderStagePlayerStats();
-      save();
-      return;
-    }
-
-    if (event.target.closest('[data-player-skill-roll]')) {
-      const select = container.querySelector('[data-player-skill-select]');
-      const template = player.skillTemplates.find((entry) => entry.id === select?.value);
-      if (!template) return;
-      const roll = Math.floor(Math.random() * 100) + 1;
-      const result = getSkillResult(roll, template.value);
-      const secret = Boolean($('#secretDice')?.checked);
-      state.logs.unshift({
-        time: nowTime(),
-        text: secret
-          ? `<strong>秘密の技能判定</strong> ${escapeHtml(player.name)} / ${escapeHtml(template.name)}: ${result} (${roll})`
-          : `<strong>技能判定</strong> ${escapeHtml(player.name)} / ${escapeHtml(template.name)}: ${roll} / ${template.value} → ${result}`,
-        secret,
-        playerText: `<strong>技能判定</strong> ${escapeHtml(player.name)} が技能を判定しました。`
-      });
-      state.logs = state.logs.slice(0, 8);
-      renderLogs();
-      save();
-    }
-  });
-
-  $('#addPlayer')?.addEventListener('click', () => {
-    const name = window.prompt('参加者の名前');
-    if (!name?.trim()) return;
-    const initials = name.trim().slice(0, 2);
-    state.players.push({ initials, name: name.trim(), role: '参加者', color: '#6b8f8a', abilities: Object.fromEntries(playerAbilityKeys.map((key) => [key, ''])), currentHP: 0, currentSAN: 0, skillTemplates: [] });
-    renderPlayers();
-    renderStagePlayerStats();
-    save();
-  });
-
   $('#resetButton')?.addEventListener('click', () => {
     if (!window.confirm('セッションを初期状態に戻しますか？')) return;
     state = structuredClone(defaultState);
     render();
     save();
   });
-
-  $('#editScenarioButton')?.addEventListener('click', () => $('#scenarioTitleInput')?.focus());
 
   $('#shareButton')?.addEventListener('click', async () => {
     const pcUrl = new URL(window.location.href);
@@ -2156,9 +2111,27 @@ function setupEventListeners() {
     }
   });
 
-  $('#toggleGmLibrary')?.addEventListener('click', () => document.body.classList.toggle('gm-library-open'));
+  $('#dataInviteButton')?.addEventListener('click', async (event) => {
+    const pcUrl = new URL(window.location.href);
+    pcUrl.searchParams.set('mode', 'pc');
+    pcUrl.searchParams.set('room', visibilityRoomId);
+    try {
+      await navigator.clipboard.writeText(pcUrl.href);
+      event.currentTarget.textContent = 'コピーしました';
+    } catch {
+      window.prompt('このURLを参加者へ送ってください', pcUrl.href);
+    }
+  });
+
+  $('#toggleGmLibrary')?.addEventListener('click', () => {
+    const modal = $('#assetSourceModal');
+    if (modal?.classList.contains('session-library-open')) closeAssetSourceModal();
+    else openAssetSourceModal('all');
+  });
 
   const boardVisibilityButton = $('#boardVisibilityToggle');
+  const diceVisibilityButton = $('#diceVisibilityToggle');
+  let diceVisibilityHidden = false;
   let boardVisibilityPressed = false;
   const releaseBoardVisibility = () => {
     if (!boardVisibilityPressed) return;
@@ -2175,6 +2148,12 @@ function setupEventListeners() {
   window.addEventListener('pointerup', releaseBoardVisibility);
   window.addEventListener('pointercancel', releaseBoardVisibility);
   window.addEventListener('blur', releaseBoardVisibility);
+
+  diceVisibilityButton?.addEventListener('click', () => {
+    diceVisibilityHidden = !diceVisibilityHidden;
+    applyPcDiceVisibility(diceVisibilityHidden);
+    diceVisibilityButton.textContent = diceVisibilityHidden ? 'ダイスを表示' : 'ダイスを隠す';
+  });
 
   window.addEventListener('storage', (event) => {
     if (event.key === pcBoardHiddenKey) applyPcBoardVisibility(event.newValue === 'true');

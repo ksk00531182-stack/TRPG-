@@ -79,6 +79,15 @@ io.on('connection', (socket) => {
     const normalizedRoomId = normalizeRoomId(roomId);
     io.to(`trpg:${normalizedRoomId}`).emit('trpg_board_visibility', { hidden: hidden === true });
   });
+
+  socket.on('trpg_dice_result', ({ roomId, title, message, resultClass } = {}) => {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    socket.to(`trpg:${normalizedRoomId}`).emit('trpg_dice_result', {
+      title: typeof title === 'string' ? title : 'ダイス判定',
+      message: typeof message === 'string' ? message : '',
+      resultClass: typeof resultClass === 'string' ? resultClass : null
+    });
+  });
 });
 
 server.listen(port, '0.0.0.0', () => {
