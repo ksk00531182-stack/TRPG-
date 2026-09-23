@@ -83,6 +83,33 @@ io.on('connection', (socket) => {
     io.to(`trpg:${normalizedRoomId}`).emit('trpg_board_visibility', { hidden: hidden === true });
   });
 
+  socket.on('trpg_layer_visibility', ({ roomId, layerType, layerId, visible } = {}) => {
+    if (!['background', 'overlay'].includes(layerType) || typeof layerId !== 'string') return;
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const roomState = trpgRooms.get(normalizedRoomId);
+    if (roomState) {
+      if (layerType === 'overlay') {
+        const overlay = Array.isArray(roomState.sceneOverlays)
+          ? roomState.sceneOverlays[Number(layerId)]
+          : null;
+        if (overlay) overlay.visible = visible === true;
+      } else if (layerId === 'whiteDark' || layerId === 'blackDark') {
+        roomState.backgroundDimming ||= { white: false, black: false };
+        roomState.backgroundDimming[layerId === 'whiteDark' ? 'white' : 'black'] = visible === true;
+      } else {
+        const layer = Array.isArray(roomState.backgroundLayers)
+          ? roomState.backgroundLayers.find((entry) => entry.id === layerId)
+          : null;
+        if (layer) layer.visible = visible === true;
+      }
+    }
+    io.to(`trpg:${normalizedRoomId}`).emit('trpg_layer_visibility', {
+      layerType,
+      layerId,
+      visible: visible === true
+    });
+  });
+
   socket.on('trpg_dice_result', ({ roomId, title, message, resultClass } = {}) => {
     const normalizedRoomId = normalizeRoomId(roomId);
     socket.to(`trpg:${normalizedRoomId}`).emit('trpg_dice_result', {

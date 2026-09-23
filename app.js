@@ -151,6 +151,24 @@ visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
   state: mode === 'gm' ? state : undefined
 }));
 visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+visibilitySocket?.on('trpg_layer_visibility', ({ layerType, layerId, visible }) => {
+  if (layerType === 'background') {
+    if (layerId === 'whiteDark' || layerId === 'blackDark') {
+      const config = getBackgroundLayerConfig(layerId);
+      state.backgroundDimming[config.key] = visible === true;
+    } else {
+      const layer = state.backgroundLayers.find((entry) => entry.id === layerId);
+      if (layer) layer.visible = visible === true;
+    }
+    renderImages();
+    renderBackgroundLayerList();
+  } else if (layerType === 'overlay') {
+    const overlay = state.sceneOverlays[Number(layerId)];
+    if (!overlay) return;
+    overlay.visible = visible === true;
+    renderOverlays();
+  }
+});
 visibilitySocket?.on('trpg_dice_result', (result) => {
   if (mode === 'pc') showPcDiceResult(result);
 });
@@ -197,6 +215,26 @@ function syncRemoteState() {
       remoteSyncTimer = null;
     }, 50);
   }
+}
+
+function syncLayerVisibility(layerId, visible) {
+  if (mode !== 'gm') return;
+  visibilitySocket?.emit('trpg_layer_visibility', {
+    roomId: visibilityRoomId,
+    layerType: 'background',
+    layerId,
+    visible: visible === true
+  });
+}
+
+function syncOverlayVisibility(index, visible) {
+  if (mode !== 'gm') return;
+  visibilitySocket?.emit('trpg_layer_visibility', {
+    roomId: visibilityRoomId,
+    layerType: 'overlay',
+    layerId: String(index),
+    visible: visible === true
+  });
 }
 
 function exportStateToJson() {
@@ -697,6 +735,7 @@ function renderBackgroundLayerList() {
         const target = state.backgroundLayers.find((layer) => layer.id === layerId);
         if (target) target.visible = !target.visible;
       }
+      syncLayerVisibility(layerId, getBackgroundLayerVisible(layerId));
       renderOverlays();
       renderBackgroundLayerList();
       save();
@@ -1315,7 +1354,10 @@ function updateSelectedOverlay(update) {
   const selectedIndexes = getSelectedOverlayIndexes();
   if (selectedGroupId !== null || selectedIndexes.length > 1 || multiSelectOverlayIndexes.length > 1) {
     selectedIndexes.forEach((index) => {
-      if (state.sceneOverlays[index]) Object.assign(state.sceneOverlays[index], update);
+      if (state.sceneOverlays[index]) {
+        Object.assign(state.sceneOverlays[index], update);
+        if (update.visible !== undefined) syncOverlayVisibility(index, state.sceneOverlays[index].visible);
+      }
     });
     renderOverlays();
     save();
@@ -1324,6 +1366,7 @@ function updateSelectedOverlay(update) {
   const index = selectedOverlayIndex ?? selectedIndexes[0];
   if (index === null || index === undefined || !state.sceneOverlays[index]) return;
   Object.assign(state.sceneOverlays[index], update);
+  if (update.visible !== undefined) syncOverlayVisibility(index, state.sceneOverlays[index].visible);
   renderOverlays();
   save();
 }
