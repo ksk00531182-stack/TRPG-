@@ -16,9 +16,17 @@ const mode = requestedMode && ['pc', 'gm'].includes(requestedMode.toLowerCase())
 const boardVisibilityChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('trpg-session-room-board-visibility') : null;
 const visibilitySocket = typeof io === 'function' ? io() : null;
 const roomParam = normalizeRoomId(urlParams.get('room'));
-const storedRoomId = normalizeRoomId(localStorage.getItem('trpg-session-room-id'));
+const storedRoomId = mode === 'gm' ? normalizeRoomId(localStorage.getItem('trpg-session-room-id')) : null;
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
-if (mode === 'gm' && !roomParam && !storedRoomId) localStorage.setItem('trpg-session-room-id', visibilityRoomId);
+if (mode === 'gm') {
+  localStorage.setItem('trpg-session-room-id', visibilityRoomId);
+  if (!roomParam) {
+    const canonicalUrl = new URL(window.location.href);
+    canonicalUrl.searchParams.set('mode', 'gm');
+    canonicalUrl.searchParams.set('room', visibilityRoomId);
+    window.history.replaceState({}, '', canonicalUrl);
+  }
+}
 let applyingRemoteState = false;
 let remoteSyncTimer = null;
 
