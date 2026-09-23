@@ -89,9 +89,13 @@ const server = http.createServer((request, response) => {
       return;
     }
 
-    response.writeHead(200, {
+    const headers = {
       'Content-Type': contentTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
-    });
+    };
+    if (['.html', '.js', '.css'].includes(path.extname(filePath).toLowerCase())) {
+      headers['Cache-Control'] = 'no-store, no-cache, must-revalidate';
+    }
+    response.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(response);
   } catch {
     response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
