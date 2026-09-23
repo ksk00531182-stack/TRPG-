@@ -202,6 +202,41 @@ function save() {
   }
 }
 
+function exportStateToJson() {
+  const dataStr = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(state, null, 2))}`;
+  const downloadAnchor = document.createElement('a');
+  const fileName = `trpg_backup_${new Date().toISOString().slice(0, 10)}.json`;
+
+  downloadAnchor.href = dataStr;
+  downloadAnchor.download = fileName;
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+function importStateFromJson(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.addEventListener('load', (event) => {
+    try {
+      const importedState = JSON.parse(event.target.result);
+      if (!importedState || typeof importedState !== 'object' || Array.isArray(importedState)) {
+        throw new Error('無効なデータ形式です。');
+      }
+
+      state = importedState;
+      sanitizeAndNormalizeState();
+      render();
+      save();
+      window.alert('データを正常に読み込みました。');
+    } catch (error) {
+      window.alert(`ファイルの読み込みに失敗しました: ${error.message}`);
+    }
+  });
+  reader.readAsText(file);
+}
+
 function renderBgm() {
   const audio = $('#bgmAudio');
   const select = $('#bgmSelect');
@@ -1639,6 +1674,11 @@ function openUngroupConfirm(groupId) {
 
 // イベントリスナーのセットアップ
 function setupEventListeners() {
+  $('#exportBtn')?.addEventListener('click', exportStateToJson);
+  $('#importFileInput')?.addEventListener('change', (event) => {
+    importStateFromJson(event.target.files?.[0]);
+    event.target.value = '';
+  });
   $('#bgmUploadButton')?.addEventListener('click', () => $('#bgmUpload')?.click());
   $('#bgmUpload')?.addEventListener('change', (event) => {
     const files = Array.from(event.target.files || []);

@@ -45,8 +45,9 @@ button { cursor: pointer; color: inherit; }
 .topbar h1, .session-banner h2, h3 { margin: 0; }
 .topbar h1 { font: 700 clamp(23px, 3vw, 34px) 'Noto Serif JP'; letter-spacing: .03em; }
 .top-actions { display: flex; align-items: center; gap: 18px; }
+.backup-controls { display: flex; align-items: center; gap: 8px; }
 .save-state { color: var(--teal); font: 10px 'DM Mono'; }
-.outline-button, .add-button { border: 1px solid var(--line); color: var(--muted); background: transparent; padding: 9px 13px; font-size: 11px; }
+.outline-button, .add-button { border: 1px solid var(--line); color: var(--muted); background: transparent; padding: 9px 13px; font-size: 11px; cursor: pointer; }
 .outline-button:hover, .add-button:hover { border-color: var(--accent); color: var(--accent); }
 
 .role-badge { display: inline-block; margin-top: 8px; color: var(--teal); border: 1px solid rgba(116,197,189,.45); padding: 4px 7px; font: 9px 'DM Mono'; letter-spacing: .1em; }

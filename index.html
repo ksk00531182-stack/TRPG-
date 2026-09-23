@@ -36,6 +36,11 @@
         <div class="top-actions">
           <span class="save-state" id="saveState">● 保存済み</span>
           <button class="outline-button gm-only" id="shareButton">参加URL</button>
+          <div class="backup-controls gm-only">
+            <button class="outline-button" id="exportBtn" type="button">バックアップをダウンロード (.json)</button>
+            <label class="outline-button btn-import" for="importFileInput">バックアップから復元</label>
+            <input class="file-input" id="importFileInput" type="file" accept=".json,application/json">
+          </div>
           <button class="outline-button gm-only" id="resetButton">リセット</button>
         </div>
       </header>
