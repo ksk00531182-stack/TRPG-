@@ -1572,10 +1572,18 @@ async function loadBundledAssets() {
           state.characterImages.push(image);
           changed = true;
         }
+        if (!state.sceneOverlays.some((overlay) => overlay.data === image.data)) {
+          state.sceneOverlays.push({ ...createOverlay(image), visible: false });
+          changed = true;
+        }
       } else {
         const target = asset.category === 'material' ? state.clueImages : state.sceneImages;
         if (!target.some((entry) => entry.data === image.data)) {
           target.push(image);
+          changed = true;
+        }
+        if (!state.sceneOverlays.some((overlay) => overlay.data === image.data)) {
+          state.sceneOverlays.push({ ...createOverlay(image), visible: false });
           changed = true;
         }
       }
