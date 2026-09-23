@@ -210,10 +210,10 @@ let pendingAssetCategory = null;
 let activeLibraryScenarioIndex = 0;
 let activeSidebarPlayerIndex = 0;
 
-function save() {
+function save({ syncState = true, syncLog = true } = {}) {
   localStorage.setItem(storageKey, JSON.stringify(state));
-  syncRemoteState();
-  syncLogs();
+  if (syncState) syncRemoteState();
+  if (syncLog) syncLogs();
   const saveState = $('#saveState');
   if (saveState) {
     saveState.textContent = '● 保存済み';
@@ -766,7 +766,7 @@ function renderBackgroundLayerList() {
       syncLayerVisibility(layerId, getBackgroundLayerVisible(layerId));
       renderOverlays();
       renderBackgroundLayerList();
-      save();
+      save({ syncState: false, syncLog: false });
     });
   });
 
@@ -1105,7 +1105,7 @@ function addGroupLayer(layer, nameOverride) {
   selectedOverlayIndex = null;
   multiSelectOverlayIndexes = [];
   renderOverlays();
-  save();
+  save({ syncState: false, syncLog: false });
 }
 
 function addOverlayToGroup(groupId, overlayIndex) {
@@ -1388,7 +1388,7 @@ function updateSelectedOverlay(update) {
       }
     });
     renderOverlays();
-    save();
+    save({ syncState: update.visible === undefined, syncLog: update.visible === undefined });
     return;
   }
   const index = selectedOverlayIndex ?? selectedIndexes[0];
@@ -1396,7 +1396,7 @@ function updateSelectedOverlay(update) {
   Object.assign(state.sceneOverlays[index], update);
   if (update.visible !== undefined) syncOverlayVisibility(index, state.sceneOverlays[index].visible);
   renderOverlays();
-  save();
+  save({ syncState: update.visible === undefined, syncLog: update.visible === undefined });
 }
 
 function renderImages() {
@@ -1992,7 +1992,7 @@ function setupEventListeners() {
     });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save();
+    save({ syncState: false });
     notifyDiceResult({
       title: secret ? '秘密のダイス' : 'ダイス判定',
       message: secret ? '秘密のダイスが振られました。' : `${count}d${sides}${modifier ? ` ${modifier > 0 ? '+' : ''}${modifier}` : ''} = ${total}`
@@ -2044,7 +2044,7 @@ function setupEventListeners() {
     state.logs.unshift({ time: nowTime(), text: `<strong>技能判定</strong> ${escapeHtml(template.name)}: ${roll} / ${template.value} → ${result}` });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save();
+    save({ syncState: false });
     notifyDiceResult({ title: template.name, message: result, resultClass: getResultClass(result) });
   });
 
@@ -2128,7 +2128,7 @@ function setupEventListeners() {
     });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save();
+    save({ syncState: false });
     notifyDiceResult({
       title: secret ? '秘密の技能判定' : skillName,
       message: secret ? '秘密の技能判定が行われました。' : result,
@@ -2156,13 +2156,13 @@ function setupEventListeners() {
     state.logs = state.logs.slice(0, 8);
     input.value = '';
     renderLogs();
-    save();
+    save({ syncState: false });
   });
 
   $('#clearLog')?.addEventListener('click', () => {
     state.logs = [];
     renderLogs();
-    save();
+    save({ syncState: false });
   });
 
   $('#resetButton')?.addEventListener('click', () => {
