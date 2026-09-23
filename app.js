@@ -1,6 +1,5 @@
 const storageKey = 'trpg-session-room-state';
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
-const urlParams = new URLSearchParams(window.location.search);
 const requestedMode = urlParams.get('mode')?.toLowerCase();
 const mode = requestedMode === 'pc' ? 'pc' : 'gm';
 const boardVisibilityChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('trpg-session-room-board-visibility') : null;
