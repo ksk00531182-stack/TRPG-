@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#10151b">
+  <title>TRPG SESSION ROOM</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-mark">
+        <span class="brand-symbol">✦</span>
+        <div><strong>SESSION</strong><small>ROOM / TRPG</small></div>
+      </div>
+      <nav class="side-nav" aria-label="メインナビゲーション">
+        <button class="nav-item active" data-view="table"><span>▦</span>セッション卓</button>
+        <button class="nav-item" data-view="clues"><span>⌕</span>調査資料</button>
+        <button class="nav-item" data-view="characters"><span>♙</span>キャラクター</button>
+        <button class="nav-item" data-view="history"><span>↺</span>ログ履歴</button>
+      </nav>
+      <div class="sidebar-note">
+        <span class="status-dot"></span><span id="connectionStatus">ローカル保存中</span>
+      </div>
+      <div class="sidebar-footer">SESSION ROOM<br><span>v1.0 / GM TOOLKIT</span></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CAMPAIGN / NIGHTFALL ARCHIVE</p>
+          <h1 id="campaignTitle">灰色港の灯台</h1>
+          <span class="role-badge" id="roleBadge">GM EDITOR</span>
+        </div>
+        <div class="top-actions">
+          <span class="save-state" id="saveState">● 保存済み</span>
+          <button class="outline-button gm-only" id="shareButton">参加URL</button>
+          <button class="outline-button gm-only" id="resetButton">リセット</button>
+        </div>
+      </header>
+
+      <section class="session-banner" id="sessionBanner">
+        <div class="scene-banner-content">
+          <span class="chapter-label">CHAPTER 02</span>
+          <h2 id="sceneTitle">灯台守のいない灯台</h2>
+          <p id="sceneDescription">海霧の向こうで、消えたはずの灯りが三度またたいた。</p>
+          <label class="image-upload-button gm-only" for="backgroundUpload">▧ 背景レイヤー追加</label>
+          <input class="file-input gm-only" id="backgroundUpload" type="file" accept="image/*" multiple>
+        </div>
+        <div class="session-meta">
+          <div><span>経過時間</span><strong id="sessionTime">02:18:44</strong></div>
+          <div><span>天候</span><strong>濃霧 / 弱風</strong></div>
+        </div>
+        <div class="scene-overlays" id="sceneOverlays" aria-label="背景上の配置画像"></div>
+
+        <div class="gm-stage-tabs gm-only" role="toolbar" aria-label="GM操作">
+          <span class="gm-stage-label">GM CONTROL</span>
+          <button class="gm-tab" type="button" data-asset-category="character">♙ キャラクター追加</button>
+          <input class="file-input" id="characterUpload" type="file" accept="image/*" multiple>
+          <button class="gm-tab" type="button" data-asset-category="material">⌕ 資料追加</button>
+          <input class="file-input" id="clueUpload" type="file" accept="image/*,application/pdf" multiple>
+          <button class="gm-tab" type="button" data-asset-category="icon">▧ アイコン追加</button>
+          <input class="file-input" id="sceneImageUpload" type="file" accept="image/*" multiple>
+          <button class="gm-tab" type="button" data-asset-category="background">▣ 背景追加</button>
+          <button class="gm-tab" id="bgmUploadButton" type="button">♫ BGM追加</button>
+          <input class="file-input" id="bgmUpload" type="file" accept="audio/*" multiple>
+          <button class="gm-tab" id="saveScenePreset" type="button">💾 シーン保存</button>
+          <button class="gm-tab" id="openScenePresets" type="button">▣ シーン一覧</button>
+          <button class="gm-tab" id="toggleDiceRoller" type="button" aria-expanded="false">🎲 ダイスロール</button>
+          <button class="gm-tab" id="toggleGmLibrary" type="button">▤ 素材一覧</button>
+        </div>
+
+        <div class="size-box bgm-controls bgm-box gm-only" id="bgmControls" data-size-box="bgm" aria-label="BGM音量">
+          <div class="size-box-header">
+            <div class="size-box-header-label"><strong class="size-box-drag">BGM</strong></div>
+          </div>
+          <select class="bgm-select" id="bgmSelect" aria-label="BGM選択">
+            <option value="">BGMなし</option>
+          </select>
+          <button type="button" class="bgm-play-toggle" id="bgmPlayToggle" title="BGMを再生" aria-label="BGMを再生">▶</button>
+          <label for="bgmVolume">音量</label>
+          <input id="bgmVolume" type="range" min="0" max="1" step="0.01" value="0.5" aria-label="BGM音量">
+          <div class="bgm-track-list" id="bgmTrackList" aria-label="BGM一覧"></div>
+          <div class="size-box-resize"></div>
+        </div>
+
+        <button class="board-visibility-toggle gm-only" id="boardVisibilityToggle" type="button" aria-label="PC画面の盤面表示を切り替え">
+          PC盤面を隠す
+        </button>
+
+        <div class="overlay-controls gm-only" id="overlayControls" aria-label="選択画像の操作">
+          <div class="size-boxes" aria-label="カテゴリ別サイズ変更">
+            <!-- キャラクター -->
+            <div class="size-box" data-size-box="character">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">キャラクター</strong></div>
+                <button type="button" class="group-layer-add" data-group-layer-category="character" title="グループレイヤー追加">グループ追加</button>
+              </div>
+              <div class="category-layer-list" data-category-layers="character"></div>
+              <input data-size-input="character" type="range" min="40" max="360" value="110" aria-label="キャラクターサイズ">
+              <div class="size-box-resize"></div>
+            </div>
+
+            <!-- 資料 -->
+            <div class="size-box" data-size-box="material">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">資料</strong></div>
+                <button type="button" class="group-layer-add" data-group-layer-category="material" title="グループレイヤー追加">グループ追加</button>
+              </div>
+              <div class="category-layer-list" data-category-layers="material"></div>
+              <input data-size-input="material" type="range" min="40" max="360" value="110" aria-label="資料サイズ">
+              <div class="size-box-resize"></div>
+            </div>
+
+            <!-- アイコン -->
+            <div class="size-box" data-size-box="icon">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">アイコン</strong></div>
+                <button type="button" class="group-layer-add" data-group-layer-category="icon" title="グループレイヤー追加">グループ追加</button>
+              </div>
+              <div class="category-layer-list" data-category-layers="icon"></div>
+              <input data-size-input="icon" type="range" min="40" max="360" value="110" aria-label="アイコンサイズ">
+              <div class="size-box-resize"></div>
+            </div>
+
+            <!-- 背景 -->
+            <div class="size-box" data-size-box="background">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">背景</strong></div>
+                <button type="button" class="background-lock-toggle" data-background-lock title="背景をロック" aria-label="背景をロック">🔓</button>
+              </div>
+              <div class="category-layer-list" data-category-layers="background"></div>
+              <input data-size-input="background" type="range" min="50" max="300" value="100" aria-label="背景スケール">
+              <div class="size-box-resize"></div>
+            </div>
+
+            <!-- ダイスロール -->
+            <div class="size-box dice-box is-collapsed" data-size-box="dice">
+              <div class="size-box-header">
+                <div class="size-box-header-label"><strong class="size-box-drag">ダイスロール</strong></div>
+              </div>
+              <div class="dice-controls">
+                <div class="dice-select">
+                  <label for="diceCount">個数</label>
+                  <input type="number" id="diceCount" value="1" min="1" max="20">
+                </div>
+                <div class="dice-select">
+                  <label for="diceSides">面数</label>
+                  <select id="diceSides">
+                    <option value="100">D100</option>
+                    <option value="20">D20</option>
+                    <option value="10">D10</option>
+                    <option value="8">D8</option>
+                    <option value="6" selected>D6</option>
+                    <option value="4">D4</option>
+                  </select>
+                </div>
+                <div class="modifier">
+                  <label for="diceModifier">修正値</label>
+                  <input type="number" id="diceModifier" value="0">
+                </div>
+                <label class="dice-secret-toggle" for="secretDice">
+                  <input type="checkbox" id="secretDice">
+                  <span>シークレットダイス</span>
+                </label>
+                <button class="roll-button" id="rollButton" type="button">振る <span>🎲</span></button>
+              </div>
+              <div class="skill-template-controls">
+                <label for="skillTemplateSelect">技能テンプレート</label>
+                <div class="skill-template-row">
+                  <select id="skillTemplateSelect" aria-label="技能テンプレート選択">
+                    <option value="">技能を選択</option>
+                  </select>
+                  <button type="button" class="skill-roll-button" id="skillRollButton" title="技能判定" aria-label="技能判定">🎲</button>
+                </div>
+                <div class="skill-template-form">
+                  <input type="text" id="skillNameInput" placeholder="技能名" maxlength="30">
+                  <input type="number" id="skillValueInput" min="1" max="100" placeholder="成功値">
+                  <button type="button" class="skill-save-button" id="saveSkillTemplate" title="技能テンプレートを保存" aria-label="技能テンプレートを保存">＋</button>
+                </div>
+              </div>
+              <div class="roll-result" id="rollResult">
+                <span>RESULT</span>
+                <strong>-</strong>
+              </div>
+              <div class="size-box-resize"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- メインダッシュボード -->
+      <div class="dashboard-grid">
+        <!-- シナリオ -->
+        <div class="panel scenario-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">SCENARIO</p>
+              <input class="scenario-title-input" id="scenarioTitleInput" type="text" placeholder="シナリオタイトル">
+            </div>
+            <button class="icon-button gm-only" id="editScenarioButton" title="編集">✎</button>
+          </div>
+          <div class="scenario-tabs" id="scenarioTabs" role="tablist" aria-label="シナリオタブ"></div>
+          <button class="scenario-tab-add gm-only" id="addScenarioTab" type="button">＋ タブ追加</button>
+          <div class="scenario-color-tools gm-only" role="toolbar" aria-label="文字色">
+            <button type="button" data-scenario-color="#e8edf0" title="白">白</button>
+            <button type="button" data-scenario-color="#eb8d7e" title="赤">赤</button>
+            <button type="button" data-scenario-color="#91b9e8" title="青">青</button>
+          </div>
+          <div id="scenarioNote" class="scenario-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="シナリオを入力..."></div>
+          <div class="tag-row">
+            <span class="tag amber">GM専用</span>
+            <span class="tag blue">セッション設定</span>
+          </div>
+        </div>
+
+        <!-- 参加者 -->
+        <div class="panel players-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">MEMBERS</p>
+              <h3>参加者一覧</h3>
+            </div>
+          </div>
+          <div class="player-list" id="playerList"></div>
+          <button class="add-player gm-only" id="addPlayer">＋ 参加者を招集</button>
+        </div>
+
+      </div>
+    </main>
+
+    <aside class="session-log-sidebar" aria-label="セッションログ">
+      <section class="session-party-panel" aria-label="参加者情報">
+        <div class="stage-sidebar-heading">
+          <p class="panel-kicker">PARTY STATUS</p>
+          <h2>参加プレイヤー</h2>
+        </div>
+        <div class="stage-player-tabs" id="stagePlayerTabs" role="tablist" aria-label="参加プレイヤー選択"></div>
+        <div class="stage-player-stats" id="stagePlayerStats"></div>
+      </section>
+      <div class="panel log-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-kicker">LOGS</p>
+            <h3>セッションログ</h3>
+          </div>
+          <button class="icon-button gm-only" id="clearLog" title="ログ消去">🗑</button>
+        </div>
+        <div class="log-list" id="logList"></div>
+        <form class="log-form" id="logForm">
+          <input type="text" id="logInput" placeholder="メッセージを入力..." autocomplete="off">
+          <button type="submit">↵</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 画像/PDF ビューアモーダル -->
+  <div class="image-viewer" id="imageViewer" aria-hidden="true">
+    <button type="button" id="closeViewer" title="閉じる">×</button>
+    <img id="viewerImage" src="" alt="拡大表示">
+    <iframe id="viewerPdf" src="" title="PDF表示"></iframe>
+  </div>
+
+  <!-- 確認ダイアログモーダル -->
+  <div class="confirm-modal" id="confirmModal" aria-hidden="true">
+    <div class="confirm-dialog" role="dialog" aria-modal="true">
+      <div class="confirm-title">確認</div>
+      <p class="confirm-message" id="confirmMessage">本当に実行しますか？</p>
+      <div class="confirm-actions">
+        <button type="button" class="confirm-button secondary" id="confirmCancel">キャンセル</button>
+        <button type="button" class="confirm-button danger" id="confirmDelete">実行する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- グループ名入力モーダル -->
+  <div class="confirm-modal" id="groupNameModal" aria-hidden="true">
+    <div class="confirm-dialog" role="dialog" aria-modal="true">
+      <div class="confirm-title">グループ作成</div>
+      <label class="group-name-label" for="groupNameInput">グループ名を入力してください</label>
+      <input type="text" class="group-name-input" id="groupNameInput" placeholder="グループ名">
+      <div class="confirm-actions">
+        <button type="button" class="confirm-button secondary" id="groupNameCancel">キャンセル</button>
+        <button type="button" class="confirm-button primary" id="groupNameConfirm">作成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 素材の追加方法選択 -->
+  <div class="asset-source-modal" id="assetSourceModal" aria-hidden="true">
+    <div class="asset-source-dialog" role="dialog" aria-modal="true" aria-labelledby="assetSourceTitle">
+      <div class="confirm-title" id="assetSourceTitle">素材を追加</div>
+      <div class="asset-source-actions">
+        <button type="button" id="chooseAssetFile">ファイルから選ぶ</button>
+      </div>
+      <div class="asset-library-list" id="assetLibraryList"></div>
+      <button type="button" class="asset-source-cancel" id="closeAssetSource">閉じる</button>
+    </div>
+  </div>
+
+  <!-- 保存済みシーン一覧 -->
+  <div class="scene-preset-modal" id="scenePresetModal" aria-hidden="true">
+    <div class="scene-preset-dialog" role="dialog" aria-modal="true" aria-labelledby="scenePresetTitle">
+      <div class="confirm-title" id="scenePresetTitle">保存済みシーン</div>
+      <div class="scene-preset-list" id="scenePresetList"></div>
+      <button type="button" class="asset-source-cancel" id="closeScenePresets">閉じる</button>
+    </div>
+  </div>
+
+  <audio id="bgmAudio" loop></audio>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
