@@ -221,13 +221,33 @@ realtimeSocket?.on('trpg_image_transform', ({ layerType, layerId, x, y, size }) 
   if (Number.isFinite(size) && layerType === 'overlay') target.size = size;
   renderOverlays();
 });
+
+function mergeRemoteState(remoteState) {
+  const merged = { ...state, ...remoteState };
+  const mergeArray = (key, identity) => {
+    if (!Array.isArray(remoteState[key])) return;
+    const currentItems = Array.isArray(state[key]) ? state[key] : [];
+    merged[key] = remoteState[key].map((item, index) => {
+      const current = identity(item, index, currentItems);
+      return current ? { ...current, ...item, data: item.data ?? current.data } : item;
+    });
+  };
+  mergeArray('backgroundLayers', (item) => state.backgroundLayers.find((entry) => entry.id === item.id));
+  mergeArray('sceneOverlays', (_item, index) => state.sceneOverlays[index]);
+  mergeArray('clueImages', (_item, index) => state.clueImages[index]);
+  mergeArray('sceneImages', (_item, index) => state.sceneImages[index]);
+  mergeArray('bgmTracks', (item) => state.bgmTracks.find((entry) => entry.id === item.id));
+  if (remoteState.bgm) merged.bgm = { ...state.bgm, ...remoteState.bgm, data: remoteState.bgm.data ?? state.bgm.data };
+  return merged;
+}
+
 visibilitySocket?.on('trpg_dice_result', (result) => {
   if (mode === 'pc') showPcDiceResult(result);
 });
 visibilitySocket?.on('trpg_state', (remoteState) => {
   if (!remoteState || typeof remoteState !== 'object') return;
   applyingRemoteState = true;
-  state = remoteState;
+  state = mergeRemoteState(remoteState);
   const logsChanged = sanitizeAndNormalizeState();
   render();
   applyingRemoteState = false;
@@ -250,13 +270,24 @@ let pendingAssetCategory = null;
 let activeLibraryScenarioIndex = 0;
 let activeSidebarPlayerIndex = 0;
 
-function save({ syncState = true, syncLog = false } = {}) {
+function createLightweightState() {
+  const lightweight = structuredClone(state);
+  lightweight.backgroundLayers = lightweight.backgroundLayers.map(({ data, ...layer }) => layer);
+  lightweight.sceneOverlays = lightweight.sceneOverlays.map(({ data, ...overlay }) => overlay);
+  lightweight.clueImages = lightweight.clueImages.map(({ data, ...image }) => image);
+  lightweight.sceneImages = lightweight.sceneImages.map(({ data, ...image }) => image);
+  lightweight.bgm = { ...lightweight.bgm, data: undefined };
+  lightweight.bgmTracks = lightweight.bgmTracks.map(({ data, ...track }) => track);
+  return lightweight;
+}
+
+function save({ syncState = true, syncLog = false, includeAssets = false } = {}) {
   localStorage.setItem(storageKey, JSON.stringify(state));
   if (!syncState && remoteSyncTimer) {
     window.clearTimeout(remoteSyncTimer);
     remoteSyncTimer = null;
   }
-  if (syncState) syncRemoteState();
+  if (syncState) syncRemoteState(includeAssets);
   if (syncLog) syncLogs();
   const saveState = $('#saveState');
   if (saveState) {
@@ -279,11 +310,15 @@ function createPlayerInviteUrl() {
   return inviteUrl;
 }
 
-function syncRemoteState() {
+function syncRemoteState(includeAssets = false) {
   if (mode === 'gm' && !applyingRemoteState) {
     if (remoteSyncTimer) window.clearTimeout(remoteSyncTimer);
     remoteSyncTimer = window.setTimeout(() => {
-      visibilitySocket?.emit('trpg_state_update', { roomId: visibilityRoomId, state });
+      visibilitySocket?.emit('trpg_state_update', {
+        roomId: visibilityRoomId,
+        state: includeAssets ? state : createLightweightState(),
+        includeAssets
+      });
       remoteSyncTimer = null;
     }, 50);
   }
@@ -419,7 +454,7 @@ function loadBgm(file, shouldPlay = true) {
     state.bgmTracks.push(track);
     state.bgm = { ...track, volume: state.bgm.volume ?? 0.5 };
     renderBgm();
-    save();
+    save({ includeAssets: true });
     if (shouldPlay) {
       try {
         await $('#bgmAudio')?.play();
@@ -438,7 +473,7 @@ async function selectBgmTrack(track) {
     audio?.pause();
     state.bgm = { name: '', data: '', volume: state.bgm.volume ?? 0.5 };
     renderBgm();
-    save();
+    save({ includeAssets: true });
     return;
   }
   audio?.pause();
@@ -1499,7 +1534,7 @@ function readBackgroundImages(files) {
       }
       renderImages();
       renderBackgroundLayerList();
-      save();
+      save({ includeAssets: true });
     });
     reader.readAsDataURL(file);
   });
@@ -1584,7 +1619,7 @@ function startDraggingBackgroundLayer(event, layer) {
   const stop = () => {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', stop);
-    save();
+    save({ includeAssets: true });
   };
 
   document.addEventListener('pointermove', move);
@@ -1629,7 +1664,7 @@ function startDraggingOverlay(event, image) {
   const stop = () => {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', stop);
-    save();
+    save({ includeAssets: true });
   };
 
   document.addEventListener('pointermove', move);

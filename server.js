@@ -62,6 +62,26 @@ function normalizeRoomId(roomId) {
     : 'trpg-session-room';
 }
 
+function mergeSessionState(currentState, nextState) {
+  if (!currentState) return nextState;
+  const merged = { ...currentState, ...nextState };
+  const mergeArray = (key, identity) => {
+    if (!Array.isArray(nextState[key])) return;
+    const currentItems = Array.isArray(currentState[key]) ? currentState[key] : [];
+    merged[key] = nextState[key].map((item, index) => {
+      const current = identity(item, index, currentItems);
+      return current ? { ...current, ...item, data: item.data ?? current.data } : item;
+    });
+  };
+  mergeArray('backgroundLayers', (item) => currentState.backgroundLayers?.find((entry) => entry.id === item.id));
+  mergeArray('sceneOverlays', (_item, index) => currentState.sceneOverlays?.[index]);
+  mergeArray('clueImages', (_item, index) => currentState.clueImages?.[index]);
+  mergeArray('sceneImages', (_item, index) => currentState.sceneImages?.[index]);
+  mergeArray('bgmTracks', (item) => currentState.bgmTracks?.find((entry) => entry.id === item.id));
+  if (nextState.bgm) merged.bgm = { ...currentState.bgm, ...nextState.bgm, data: nextState.bgm.data ?? currentState.bgm?.data };
+  return merged;
+}
+
 io.on('connection', (socket) => {
   socket.on('trpg_subscribe', ({ roomId } = {}) => {
     socket.join(`trpg:${normalizeRoomId(roomId)}`);
@@ -82,7 +102,8 @@ io.on('connection', (socket) => {
   socket.on('trpg_state_update', ({ roomId, state } = {}) => {
     if (!state || typeof state !== 'object') return;
     const normalizedRoomId = normalizeRoomId(roomId);
-    trpgRooms.set(normalizedRoomId, state);
+    const storedState = mergeSessionState(trpgRooms.get(normalizedRoomId), state);
+    trpgRooms.set(normalizedRoomId, storedState);
     socket.to(`trpg:${normalizedRoomId}`).emit('trpg_state', state);
   });
 
