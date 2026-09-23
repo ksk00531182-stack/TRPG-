@@ -218,6 +218,15 @@ function syncLogs() {
   visibilitySocket?.emit('trpg_logs_update', { roomId: visibilityRoomId, logs: state.logs });
 }
 
+function createPlayerInviteUrl() {
+  const inviteUrl = new URL(window.location.href);
+  inviteUrl.hash = '';
+  inviteUrl.search = '';
+  inviteUrl.searchParams.set('mode', 'pc');
+  inviteUrl.searchParams.set('room', visibilityRoomId);
+  return inviteUrl;
+}
+
 function syncRemoteState() {
   if (mode === 'gm' && !applyingRemoteState) {
     if (remoteSyncTimer) window.clearTimeout(remoteSyncTimer);
@@ -2156,9 +2165,7 @@ function setupEventListeners() {
   });
 
   $('#shareButton')?.addEventListener('click', async () => {
-    const pcUrl = new URL(window.location.href);
-    pcUrl.searchParams.set('mode', 'pc');
-    pcUrl.searchParams.set('room', visibilityRoomId);
+    const pcUrl = createPlayerInviteUrl();
     try {
       await navigator.clipboard.writeText(pcUrl.href);
       const saveState = $('#saveState');
@@ -2169,9 +2176,7 @@ function setupEventListeners() {
   });
 
   $('#dataInviteButton')?.addEventListener('click', async (event) => {
-    const pcUrl = new URL(window.location.href);
-    pcUrl.searchParams.set('mode', 'pc');
-    pcUrl.searchParams.set('room', visibilityRoomId);
+    const pcUrl = createPlayerInviteUrl();
     try {
       await navigator.clipboard.writeText(pcUrl.href);
       event.currentTarget.textContent = 'コピーしました';

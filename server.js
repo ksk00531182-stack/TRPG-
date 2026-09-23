@@ -22,7 +22,11 @@ const contentTypes = {
 };
 
 function getStaticFile(requestUrl) {
-  const requestedPath = decodeURIComponent(requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname);
+  let requestedPath = decodeURIComponent(requestUrl.pathname);
+  if (requestedPath === '/') requestedPath = '/index.html';
+  if (requestedPath.startsWith('/trpg-session-room/')) {
+    requestedPath = requestedPath.slice('/trpg-session-room'.length);
+  }
   const filePath = path.resolve(rootDirectory, `.${requestedPath}`);
   if (filePath !== rootDirectory && !filePath.startsWith(`${rootDirectory}${path.sep}`)) return null;
   return filePath;
