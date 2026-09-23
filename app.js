@@ -151,6 +151,11 @@ visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
   state: mode === 'gm' ? state : undefined
 }));
 visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+visibilitySocket?.on('trpg_logs', (logs) => {
+  if (!Array.isArray(logs)) return;
+  state.logs = logs;
+  renderLogs();
+});
 visibilitySocket?.on('trpg_layer_visibility', ({ layerType, layerId, visible }) => {
   if (layerType === 'background') {
     if (layerId === 'whiteDark' || layerId === 'blackDark') {
@@ -200,11 +205,17 @@ let activeSidebarPlayerIndex = 0;
 function save() {
   localStorage.setItem(storageKey, JSON.stringify(state));
   syncRemoteState();
+  syncLogs();
   const saveState = $('#saveState');
   if (saveState) {
     saveState.textContent = '● 保存済み';
     saveState.style.color = 'var(--teal)';
   }
+}
+
+function syncLogs() {
+  if (mode !== 'gm' || applyingRemoteState) return;
+  visibilitySocket?.emit('trpg_logs_update', { roomId: visibilityRoomId, logs: state.logs });
 }
 
 function syncRemoteState() {

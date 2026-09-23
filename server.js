@@ -78,6 +78,14 @@ io.on('connection', (socket) => {
     socket.to(`trpg:${normalizedRoomId}`).emit('trpg_state', state);
   });
 
+  socket.on('trpg_logs_update', ({ roomId, logs } = {}) => {
+    if (!Array.isArray(logs)) return;
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const roomState = trpgRooms.get(normalizedRoomId);
+    if (roomState) roomState.logs = logs;
+    socket.to(`trpg:${normalizedRoomId}`).emit('trpg_logs', logs);
+  });
+
   socket.on('trpg_board_visibility', ({ roomId, hidden } = {}) => {
     const normalizedRoomId = normalizeRoomId(roomId);
     io.to(`trpg:${normalizedRoomId}`).emit('trpg_board_visibility', { hidden: hidden === true });
