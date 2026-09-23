@@ -822,7 +822,7 @@ function renderOverlays() {
     const isSelected = selectedGroupId !== null ? overlay.groupId === selectedGroupId : (multiSelectOverlayIndexes.includes(index) || selectedOverlayIndex === index);
     const groupVisible = overlay.groupId ? getGroupEffectiveVisible(overlay.groupId) : true;
     const isVisible = overlay.visible && groupVisible;
-    return `<img class="scene-overlay ${isSelected ? 'selected' : ''} ${isGroupMember ? 'group-member' : ''}" data-overlay-index="${index}" src="${overlay.data}" alt="${escapeHtml(overlay.name)}" title="${escapeHtml(overlay.name)}" style="left:${overlay.x}%;top:${overlay.y}%;width:${overlay.size}px;z-index:${index + 1};transform:translate(-50%, -50%) rotate(${overlay.rotation}deg);display:${isVisible ? 'block' : 'none'}">`;
+    return `<img class="scene-overlay ${isSelected ? 'selected' : ''} ${isGroupMember ? 'group-member' : ''}" data-overlay-index="${index}" src="${overlay.data}" alt="${escapeHtml(overlay.name)}" title="${escapeHtml(overlay.name)}" style="left:${overlay.x}%;top:${overlay.y}%;width:${overlay.size}px;z-index:${300 + index};transform:translate(-50%, -50%) rotate(${overlay.rotation}deg);display:${isVisible ? 'block' : 'none'}">`;
   }).join('');
 
   const dimmerHtml = getBackgroundLayerEntries()
