@@ -1,14 +1,21 @@
-app.get('/path', (req, res) => {
-  const param = req.query.yourParam; // クエリパラメータの取得
-});
+const urlParams = new URLSearchParams(window.location.search);
+
+function normalizeRoomId(value) {
+  if (typeof value !== 'string') return null;
+  const roomId = value.trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(roomId) ? roomId : null;
+}
+
 const storageKey = 'trpg-session-room-state';
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
-const requestedMode = urlParams.get('mode')?.toLowerCase();
-const mode = requestedMode === 'pc' ? 'pc' : 'gm';
+const requestedMode = urlParams.get('mode');
+const mode = requestedMode && ['pc', 'gm'].includes(requestedMode.toLowerCase())
+  ? requestedMode.toLowerCase()
+  : 'gm';
 const boardVisibilityChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('trpg-session-room-board-visibility') : null;
 const visibilitySocket = typeof io === 'function' ? io() : null;
-const roomParam = urlParams.get('room');
-const storedRoomId = localStorage.getItem('trpg-session-room-id');
+const roomParam = normalizeRoomId(urlParams.get('room'));
+const storedRoomId = normalizeRoomId(localStorage.getItem('trpg-session-room-id'));
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
 if (mode === 'gm' && !roomParam && !storedRoomId) localStorage.setItem('trpg-session-room-id', visibilityRoomId);
 let applyingRemoteState = false;

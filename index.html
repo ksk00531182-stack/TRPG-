@@ -15,10 +15,10 @@
         <div><strong>SESSION</strong><small>ROOM / TRPG</small></div>
       </div>
       <nav class="side-nav" aria-label="メインナビゲーション">
-        <button class="nav-item active" data-view="table"><span>▦</span>セッション卓</button>
-        <button class="nav-item" data-view="clues"><span>⌕</span>調査資料</button>
-        <button class="nav-item" data-view="characters"><span>♙</span>キャラクター</button>
-        <button class="nav-item" data-view="history"><span>↺</span>ログ履歴</button>
+        <button type="button" class="nav-item active" data-view="table"><span>▦</span>セッション卓</button>
+        <button type="button" class="nav-item" data-view="clues"><span>⌕</span>調査資料</button>
+        <button type="button" class="nav-item" data-view="characters"><span>♙</span>キャラクター</button>
+        <button type="button" class="nav-item" data-view="history"><span>↺</span>ログ履歴</button>
       </nav>
       <div class="sidebar-note">
         <span class="status-dot"></span><span id="connectionStatus">ローカル保存中</span>
@@ -35,13 +35,13 @@
         </div>
         <div class="top-actions">
           <span class="save-state" id="saveState">● 保存済み</span>
-          <button class="outline-button gm-only" id="shareButton">参加URL</button>
+          <button type="button" class="outline-button gm-only" id="shareButton">参加URL</button>
           <div class="backup-controls gm-only">
             <button class="outline-button" id="exportBtn" type="button">バックアップをダウンロード (.json)</button>
             <label class="outline-button btn-import" for="importFileInput">バックアップから復元</label>
             <input class="file-input" id="importFileInput" type="file" accept=".json,application/json">
           </div>
-          <button class="outline-button gm-only" id="resetButton">リセット</button>
+          <button type="button" class="outline-button gm-only" id="resetButton">リセット</button>
         </div>
       </header>
 
@@ -204,7 +204,7 @@
               <p class="panel-kicker">SCENARIO</p>
               <input class="scenario-title-input" id="scenarioTitleInput" type="text" placeholder="シナリオタイトル">
             </div>
-            <button class="icon-button gm-only" id="editScenarioButton" title="編集">✎</button>
+            <button type="button" class="icon-button gm-only" id="editScenarioButton" title="編集">✎</button>
           </div>
           <div class="scenario-tabs" id="scenarioTabs" role="tablist" aria-label="シナリオタブ"></div>
           <button class="scenario-tab-add gm-only" id="addScenarioTab" type="button">＋ タブ追加</button>
@@ -229,7 +229,7 @@
             </div>
           </div>
           <div class="player-list" id="playerList"></div>
-          <button class="add-player gm-only" id="addPlayer">＋ 参加者を招集</button>
+          <button type="button" class="add-player gm-only" id="addPlayer">＋ 参加者を招集</button>
         </div>
 
       </div>
@@ -250,7 +250,7 @@
             <p class="panel-kicker">LOGS</p>
             <h3>セッションログ</h3>
           </div>
-          <button class="icon-button gm-only" id="clearLog" title="ログ消去">🗑</button>
+          <button type="button" class="icon-button gm-only" id="clearLog" title="ログ消去">🗑</button>
         </div>
         <div class="log-list" id="logList"></div>
         <form class="log-form" id="logForm">
