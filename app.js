@@ -1,9 +1,11 @@
 const storageKey = 'trpg-session-room-state';
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
-const mode = new URLSearchParams(window.location.search).get('mode') === 'pc' ? 'pc' : 'gm';
+const urlParams = new URLSearchParams(window.location.search);
+const requestedMode = urlParams.get('mode')?.toLowerCase();
+const mode = requestedMode === 'pc' ? 'pc' : 'gm';
 const boardVisibilityChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('trpg-session-room-board-visibility') : null;
 const visibilitySocket = typeof io === 'function' ? io() : null;
-const roomParam = new URLSearchParams(window.location.search).get('room');
+const roomParam = urlParams.get('room');
 const storedRoomId = localStorage.getItem('trpg-session-room-id');
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
 if (mode === 'gm' && !roomParam && !storedRoomId) localStorage.setItem('trpg-session-room-id', visibilityRoomId);
