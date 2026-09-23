@@ -210,8 +210,12 @@ let pendingAssetCategory = null;
 let activeLibraryScenarioIndex = 0;
 let activeSidebarPlayerIndex = 0;
 
-function save({ syncState = true, syncLog = true } = {}) {
+function save({ syncState = true, syncLog = false } = {}) {
   localStorage.setItem(storageKey, JSON.stringify(state));
+  if (!syncState && remoteSyncTimer) {
+    window.clearTimeout(remoteSyncTimer);
+    remoteSyncTimer = null;
+  }
   if (syncState) syncRemoteState();
   if (syncLog) syncLogs();
   const saveState = $('#saveState');
@@ -222,7 +226,7 @@ function save({ syncState = true, syncLog = true } = {}) {
 }
 
 function syncLogs() {
-  if (mode !== 'gm' || applyingRemoteState) return;
+  if (applyingRemoteState) return;
   visibilitySocket?.emit('trpg_logs_update', { roomId: visibilityRoomId, logs: state.logs });
 }
 
@@ -1992,7 +1996,7 @@ function setupEventListeners() {
     });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save({ syncState: false });
+    save({ syncState: false, syncLog: true });
     notifyDiceResult({
       title: secret ? '秘密のダイス' : 'ダイス判定',
       message: secret ? '秘密のダイスが振られました。' : `${count}d${sides}${modifier ? ` ${modifier > 0 ? '+' : ''}${modifier}` : ''} = ${total}`
@@ -2044,7 +2048,7 @@ function setupEventListeners() {
     state.logs.unshift({ time: nowTime(), text: `<strong>技能判定</strong> ${escapeHtml(template.name)}: ${roll} / ${template.value} → ${result}` });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save({ syncState: false });
+    save({ syncState: false, syncLog: true });
     notifyDiceResult({ title: template.name, message: result, resultClass: getResultClass(result) });
   });
 
@@ -2128,7 +2132,7 @@ function setupEventListeners() {
     });
     state.logs = state.logs.slice(0, 8);
     renderLogs();
-    save({ syncState: false });
+    save({ syncState: false, syncLog: true });
     notifyDiceResult({
       title: secret ? '秘密の技能判定' : skillName,
       message: secret ? '秘密の技能判定が行われました。' : result,
@@ -2156,13 +2160,13 @@ function setupEventListeners() {
     state.logs = state.logs.slice(0, 8);
     input.value = '';
     renderLogs();
-    save({ syncState: false });
+    save({ syncState: false, syncLog: true });
   });
 
   $('#clearLog')?.addEventListener('click', () => {
     state.logs = [];
     renderLogs();
-    save({ syncState: false });
+    save({ syncState: false, syncLog: true });
   });
 
   $('#resetButton')?.addEventListener('click', () => {
