@@ -378,7 +378,11 @@ function syncImageTransform(layerType, layerId, target) {
 
 function syncAssetAdd(assetType, asset, overlay = null) {
   if (mode !== 'gm') return;
-  realtimeSocket?.emit('trpg_asset_add', { roomId: visibilityRoomId, assetType, asset, overlay });
+  realtimeSocket?.emit('trpg_asset_add', { roomId: visibilityRoomId, assetType, asset, overlay }, (result) => {
+    if (result?.ok) return;
+    // Recover from a disconnected or restarted realtime channel with one complete sync.
+    save({ includeAssets: true });
+  });
 }
 
 function syncBgmPlayback(playing) {

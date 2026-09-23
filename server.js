@@ -92,8 +92,8 @@ io.on('connection', (socket) => {
     const roomKey = `trpg:${normalizedRoomId}`;
     socket.join(roomKey);
 
-    if (mode === 'gm' && state && typeof state === 'object' && !trpgRooms.has(normalizedRoomId)) {
-      trpgRooms.set(normalizedRoomId, state);
+    if (mode === 'gm' && state && typeof state === 'object') {
+      trpgRooms.set(normalizedRoomId, mergeSessionState(trpgRooms.get(normalizedRoomId), state));
     }
     const storedState = trpgRooms.get(normalizedRoomId);
     if (storedState) socket.emit('trpg_state', storedState);
@@ -171,8 +171,11 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('trpg_asset_add', ({ roomId, assetType, asset, overlay } = {}) => {
-    if (!asset || typeof asset.data !== 'string') return;
+  socket.on('trpg_asset_add', ({ roomId, assetType, asset, overlay } = {}, acknowledge) => {
+    if (!asset || typeof asset.data !== 'string') {
+      if (typeof acknowledge === 'function') acknowledge({ ok: false, error: 'invalid-asset' });
+      return;
+    }
     const normalizedRoomId = normalizeRoomId(roomId);
     const roomState = trpgRooms.get(normalizedRoomId);
     if (roomState) {
@@ -192,6 +195,7 @@ io.on('connection', (socket) => {
       }
     }
     socket.to(`trpg:${normalizedRoomId}`).emit('trpg_asset_add', { assetType, asset, overlay });
+    if (typeof acknowledge === 'function') acknowledge({ ok: true, assetId: asset.id || asset.name });
   });
 
   socket.on('trpg_dice_result', ({ roomId, title, message, resultClass } = {}) => {
