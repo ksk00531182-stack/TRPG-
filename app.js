@@ -1,4 +1,6 @@
-const urlParams = new URLSearchParams(window.location.search);
+app.get('/path', (req, res) => {
+  const param = req.query.yourParam; // クエリパラメータの取得
+});
 const storageKey = 'trpg-session-room-state';
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
 const requestedMode = urlParams.get('mode')?.toLowerCase();
