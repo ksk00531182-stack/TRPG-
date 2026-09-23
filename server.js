@@ -1,11 +1,14 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 
 const port = Number.parseInt(process.env.PORT, 10) || 3000;
 const rootDirectory = __dirname;
 const trpgRooms = new Map();
+const assetDirectory = path.join(rootDirectory, 'assets', 'session');
+fs.mkdirSync(assetDirectory, { recursive: true });
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -34,6 +37,30 @@ function getStaticFile(requestUrl) {
 
 const server = http.createServer((request, response) => {
   try {
+    if (request.method === 'POST' && request.url?.split('?')[0] === '/api/assets') {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 80 * 1024 * 1024) request.destroy();
+      });
+      request.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          const match = typeof payload.data === 'string' && payload.data.match(/^data:([^;]+);base64,(.+)$/s);
+          if (!match) throw new Error('Invalid asset data');
+          const extension = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'application/pdf': '.pdf', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav' }[match[1]] || '';
+          const fileName = `${crypto.randomUUID()}${extension}`;
+          fs.writeFileSync(path.join(assetDirectory, fileName), Buffer.from(match[2], 'base64'));
+          response.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ url: `/assets/session/${fileName}`, name: payload.name || fileName }));
+        } catch {
+          response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ error: 'Invalid asset' }));
+        }
+      });
+      return;
+    }
     const filePath = getStaticFile(new URL(request.url, `http://${request.headers.host || 'localhost'}`));
     if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

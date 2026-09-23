@@ -1554,11 +1554,18 @@ function render() {
 function readBackgroundImages(files) {
   Array.from(files || []).forEach((file) => {
     const reader = new FileReader();
-    reader.addEventListener('load', () => {
+    reader.addEventListener('load', async () => {
       const layerId = `bg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-      const alreadyExists = state.backgroundLayers.some((layer) => layer.data === reader.result && layer.name === file.name);
+      let assetUrl;
+      try {
+        assetUrl = await uploadAsset(file.name, reader.result);
+      } catch (error) {
+        console.error(error);
+        return;
+      }
+      const alreadyExists = state.backgroundLayers.some((layer) => layer.data === assetUrl && layer.name === file.name);
       if (!alreadyExists) {
-        const layer = { id: layerId, name: file.name, data: reader.result, visible: true };
+        const layer = { id: layerId, name: file.name, data: assetUrl, visible: true };
         state.backgroundLayers.push(layer);
         state.backgroundLayerOrder = getBackgroundLayerOrder();
         syncAssetAdd('background', layer);
@@ -1575,8 +1582,15 @@ function readImages(files, stateKey) {
   const defaultLayer = stateKey === 'clueImages' ? 'material' : 'icon';
   Array.from(files || []).forEach((file) => {
     const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      const image = { name: file.name, type: file.type, data: reader.result, layer: defaultLayer };
+    reader.addEventListener('load', async () => {
+      let assetUrl;
+      try {
+        assetUrl = await uploadAsset(file.name, reader.result);
+      } catch (error) {
+        console.error(error);
+        return;
+      }
+      const image = { name: file.name, type: file.type, data: assetUrl, layer: defaultLayer };
       state[stateKey].push(image);
       if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
         const overlay = createOverlay({ ...image, layer: image.layer || defaultLayer });
@@ -1594,6 +1608,17 @@ function readImages(files, stateKey) {
 
 function createOverlay(image) {
   return { name: image.name, data: image.data, layer: image.layer || 'material', x: 50, y: 50, size: 110, rotation: 0, visible: true, groupId: null };
+}
+
+async function uploadAsset(fileName, data) {
+  const response = await fetch('/api/assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: fileName, data })
+  });
+  if (!response.ok) throw new Error(`Asset upload failed: ${response.status}`);
+  const result = await response.json();
+  return result.url;
 }
 
 function addOverlay(image) {
@@ -2083,8 +2108,14 @@ function setupEventListeners() {
     if (!files.length) return;
     files.forEach((file) => {
       const reader = new FileReader();
-      reader.addEventListener('load', () => {
-        const imageData = reader.result;
+      reader.addEventListener('load', async () => {
+        let imageData;
+        try {
+          imageData = await uploadAsset(file.name, reader.result);
+        } catch (error) {
+          console.error(error);
+          return;
+        }
         const image = { name: file.name, data: imageData, layer: 'character' };
         if (files.length === 1 && !state.characterImage) {
           state.characterImage = imageData;
