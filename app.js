@@ -1,3 +1,4 @@
+const urlParams = new URLSearchParams(window.location.search);
 const storageKey = 'trpg-session-room-state';
 const pcBoardHiddenKey = 'trpg-session-room-pc-board-hidden';
 const requestedMode = urlParams.get('mode')?.toLowerCase();
@@ -9,28 +10,6 @@ const storedRoomId = localStorage.getItem('trpg-session-room-id');
 const visibilityRoomId = roomParam || storedRoomId || (mode === 'gm' ? `session-${Math.random().toString(36).slice(2, 10)}` : 'trpg-session-room');
 if (mode === 'gm' && !roomParam && !storedRoomId) localStorage.setItem('trpg-session-room-id', visibilityRoomId);
 let applyingRemoteState = false;
-
-visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
-  roomId: visibilityRoomId,
-  mode,
-  state: mode === 'gm' ? state : undefined
-}));
-visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
-visibilitySocket?.on('trpg_state', (remoteState) => {
-  if (!remoteState || typeof remoteState !== 'object') return;
-  applyingRemoteState = true;
-  state = remoteState;
-  state.backgroundLayers ||= [];
-  state.backgroundLayerOrder ||= [];
-  state.backgroundDimming ||= { white: false, black: false };
-  state.layerGroups ||= [];
-  state.skillTemplates ||= [];
-  state.scenePresets ||= [];
-  state.bgmTracks ||= [];
-  state.players ||= [];
-  render();
-  applyingRemoteState = false;
-});
 
 const defaultState = {
   backgroundLayers: [],
@@ -94,86 +73,107 @@ function loadInitialState() {
 }
 
 let state = loadInitialState();
-const legacyScenarioNote = state.scenarioNote || state.sceneNote || defaultState.scenarioTabs[0].content;
-state.scenarioTitle ||= defaultState.scenarioTitle;
-state.scenarioTabs = Array.isArray(state.scenarioTabs) && state.scenarioTabs.length
-  ? state.scenarioTabs
-  : [{ id: `scenario-${Date.now()}`, title: '導入', content: legacyScenarioNote }];
-state.activeScenarioTabId = state.scenarioTabs.some((tab) => tab.id === state.activeScenarioTabId)
-  ? state.activeScenarioTabId
-  : state.scenarioTabs[0].id;
-delete state.sceneNote;
-delete state.scenarioNote;
 
-// 内部データモデルの平準化
-state.clueImages ||= [];
-state.sceneImages ||= [];
-state.backgroundScale ||= 100;
-state.backgroundDimming ||= { white: false, black: false };
-state.backgroundLocked = Boolean(state.backgroundLocked);
-state.sizeBoxLayouts ||= {};
-state.layerGroups ||= [];
-state.skillTemplates = Array.isArray(state.skillTemplates) ? state.skillTemplates : [];
-state.scenePresets = Array.isArray(state.scenePresets) ? state.scenePresets : [];
-state.bgm = { name: '', data: '', volume: 0.5, ...(state.bgm || {}) };
-state.bgmTracks = Array.isArray(state.bgmTracks) ? state.bgmTracks : [];
-if (!state.bgmTracks.length && state.bgm.data) {
-  state.bgmTracks.push({ id: `bgm-${Date.now()}`, name: state.bgm.name || 'BGM', data: state.bgm.data });
+function sanitizeAndNormalizeState() {
+  const legacyScenarioNote = state.scenarioNote || state.sceneNote || defaultState.scenarioTabs[0].content;
+  state.scenarioTitle ||= defaultState.scenarioTitle;
+  state.scenarioTabs = Array.isArray(state.scenarioTabs) && state.scenarioTabs.length
+    ? state.scenarioTabs
+    : [{ id: `scenario-${Date.now()}`, title: '導入', content: legacyScenarioNote }];
+  state.activeScenarioTabId = state.scenarioTabs.some((tab) => tab.id === state.activeScenarioTabId)
+    ? state.activeScenarioTabId
+    : state.scenarioTabs[0].id;
+  delete state.sceneNote;
+  delete state.scenarioNote;
+
+  // 内部データモデルの平準化
+  state.clueImages ||= [];
+  state.sceneImages ||= [];
+  state.backgroundScale ||= 100;
+  state.backgroundDimming ||= { white: false, black: false };
+  state.backgroundLocked = Boolean(state.backgroundLocked);
+  state.sizeBoxLayouts ||= {};
+  state.layerGroups ||= [];
+  state.skillTemplates = Array.isArray(state.skillTemplates) ? state.skillTemplates : [];
+  state.scenePresets = Array.isArray(state.scenePresets) ? state.scenePresets : [];
+  state.bgm = { name: '', data: '', volume: 0.5, ...(state.bgm || {}) };
+  state.bgmTracks = Array.isArray(state.bgmTracks) ? state.bgmTracks : [];
+  if (!state.bgmTracks.length && state.bgm.data) {
+    state.bgmTracks.push({ id: `bgm-${Date.now()}`, name: state.bgm.name || 'BGM', data: state.bgm.data });
+  }
+
+  const defaultPlayerAbilities = [
+    { STR: 50, CON: 55, POW: 60, DEX: 65, APP: 45, SIZ: 55, INT: 70, EDU: 60, LUK: 50 },
+    { STR: 70, CON: 65, POW: 48, DEX: 55, APP: 40, SIZ: 60, INT: 50, EDU: 45, LUK: 55 },
+    { STR: 40, CON: 45, POW: 62, DEX: 45, APP: 60, SIZ: 50, INT: 80, EDU: 75, LUK: 65 },
+    { STR: 55, CON: 60, POW: 71, DEX: 60, APP: 70, SIZ: 55, INT: 65, EDU: 55, LUK: 45 }
+  ];
+
+  state.players = (state.players || []).map((player, index) => ({
+    ...player,
+    abilities: { ...(defaultPlayerAbilities[index] || defaultPlayerAbilities[0]), ...(player.abilities || {}) },
+    skillTemplates: Array.isArray(player.skillTemplates) ? player.skillTemplates : []
+  }));
+
+  state.players = state.players.map((player) => {
+    const con = Number(player.abilities.CON) || 0;
+    const siz = Number(player.abilities.SIZ) || 0;
+    return {
+      ...player,
+      currentHP: player.currentHP ?? (con + siz) / 10,
+      currentSAN: player.currentSAN ?? (player.abilities.POW ?? '')
+    };
+  });
+
+  const initialPlayerNames = new Set(['リナ・ノース', 'カイ・ルーン', 'ミレイユ', 'サラ・アッシュ']);
+  state.players = state.players.filter((player) => !initialPlayerNames.has(player.name));
+
+  state.backgroundLayers = (state.backgroundLayers || [])
+    .map((layer) => ({ visible: true, order: 0, x: 50, y: 50, scale: state.backgroundScale, ...layer }))
+    .filter((layer) => Boolean(layer && layer.id && layer.data));
+
+  state.backgroundLayers = state.backgroundLayers.filter(
+    (layer, index, list) => list.findIndex((item) => item.id === layer.id) === index
+  );
+
+  state.sceneOverlays = (state.sceneOverlays || []).map((overlay) => ({
+    visible: true,
+    rotation: 0,
+    layer: 'material',
+    groupId: null,
+    ...overlay
+  }));
+
+  state.backgroundLayerOrder = [...new Set([
+    ...(Array.isArray(state.backgroundLayerOrder)
+      ? state.backgroundLayerOrder.filter((id) => state.backgroundLayers.some((l) => l.id === id))
+      : []),
+    ...state.backgroundLayers.map((l) => l.id),
+    'whiteDark',
+    'blackDark'
+  ])];
+
+  state.layerGroups = state.layerGroups.map((group) => ({ visible: true, ...group }));
 }
 
-const defaultPlayerAbilities = [
-  { STR: 50, CON: 55, POW: 60, DEX: 65, APP: 45, SIZ: 55, INT: 70, EDU: 60, LUK: 50 },
-  { STR: 70, CON: 65, POW: 48, DEX: 55, APP: 40, SIZ: 60, INT: 50, EDU: 45, LUK: 55 },
-  { STR: 40, CON: 45, POW: 62, DEX: 45, APP: 60, SIZ: 50, INT: 80, EDU: 75, LUK: 65 },
-  { STR: 55, CON: 60, POW: 71, DEX: 60, APP: 70, SIZ: 55, INT: 65, EDU: 55, LUK: 45 }
-];
+sanitizeAndNormalizeState();
+
 const playerAbilityKeys = ['STR', 'CON', 'POW', 'DEX', 'APP', 'SIZ', 'INT', 'EDU', 'LUK'];
 
-state.players = (state.players || []).map((player, index) => ({
-  ...player,
-  abilities: { ...(defaultPlayerAbilities[index] || defaultPlayerAbilities[0]), ...(player.abilities || {}) },
-  skillTemplates: Array.isArray(player.skillTemplates) ? player.skillTemplates : []
+visibilitySocket?.on('connect', () => visibilitySocket.emit('trpg_join', {
+  roomId: visibilityRoomId,
+  mode,
+  state: mode === 'gm' ? state : undefined
 }));
-
-state.players = state.players.map((player) => {
-  const con = Number(player.abilities.CON) || 0;
-  const siz = Number(player.abilities.SIZ) || 0;
-  return {
-    ...player,
-    currentHP: player.currentHP ?? (con + siz) / 10,
-    currentSAN: player.currentSAN ?? (player.abilities.POW ?? '')
-  };
+visibilitySocket?.on('trpg_board_visibility', ({ hidden }) => applyPcBoardVisibility(hidden === true));
+visibilitySocket?.on('trpg_state', (remoteState) => {
+  if (!remoteState || typeof remoteState !== 'object') return;
+  applyingRemoteState = true;
+  state = remoteState;
+  sanitizeAndNormalizeState();
+  render();
+  applyingRemoteState = false;
 });
-
-const initialPlayerNames = new Set(['リナ・ノース', 'カイ・ルーン', 'ミレイユ', 'サラ・アッシュ']);
-state.players = state.players.filter((player) => !initialPlayerNames.has(player.name));
-
-state.backgroundLayers = (state.backgroundLayers || [])
-  .map((layer) => ({ visible: true, order: 0, x: 50, y: 50, scale: state.backgroundScale, ...layer }))
-  .filter((layer) => Boolean(layer && layer.id && layer.data));
-
-state.backgroundLayers = state.backgroundLayers.filter(
-  (layer, index, list) => list.findIndex((item) => item.id === layer.id) === index
-);
-
-state.sceneOverlays = (state.sceneOverlays || []).map((overlay) => ({
-  visible: true,
-  rotation: 0,
-  layer: 'material',
-  groupId: null,
-  ...overlay
-}));
-
-state.backgroundLayerOrder = [...new Set([
-  ...(Array.isArray(state.backgroundLayerOrder)
-    ? state.backgroundLayerOrder.filter((id) => state.backgroundLayers.some((l) => l.id === id))
-    : []),
-  ...state.backgroundLayers.map((l) => l.id),
-  'whiteDark',
-  'blackDark'
-])];
-
-state.layerGroups = state.layerGroups.map((group) => ({ visible: true, ...group }));
 
 // UI選択状態
 let selectedOverlayIndex = null;
@@ -259,7 +259,7 @@ function loadBgm(file, shouldPlay = true) {
         await $('#bgmAudio')?.play();
         renderBgm();
       } catch {
-        // Browser autoplay policy may require another user gesture.
+        // Autoplay safe catch
       }
     }
   });
@@ -283,7 +283,7 @@ async function selectBgmTrack(track) {
     await audio?.play();
     renderBgm();
   } catch {
-    // Browser autoplay policy may require pressing play.
+    // Autoplay safe catch
   }
 }
 
