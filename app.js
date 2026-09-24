@@ -68,7 +68,11 @@ async function uploadAssets() {
     assetStatus.textContent = 'アップロード完了';
     loadAssets();
   } catch (error) {
-    assetStatus.textContent = error.name === 'AbortError' ? 'アップロードがタイムアウトしました' : `アップロード失敗: ${error.message}`;
+    assetStatus.textContent = error.name === 'AbortError'
+      ? 'アップロードがタイムアウトしました'
+      : error.message === 'Failed to fetch'
+        ? 'R2接続失敗: バケットのCORS設定を確認してください'
+        : `アップロード失敗: ${error.message}`;
   }
 }
 
@@ -98,7 +102,7 @@ socket.on('members', renderMembers);
 socket.on('typing', ({ name, isTyping }) => { typing.textContent = isTyping ? `${name} が入力中...` : ''; });
 if (params.get('room')) roomIdInput.value = params.get('room');
 roleInput.addEventListener('change', () => { $('#roleHint').textContent = roleInput.value === 'gm' ? 'ルームを作成してPCへURLを共有します' : 'GMから受け取ったルームIDを入力します'; });
-$('#uploadAssets').addEventListener('click', uploadAssets);
+assetFiles.addEventListener('change', uploadAssets);
 assetList.addEventListener('click', async (event) => {
   const button = event.target.closest('.asset-delete');
   if (!button) return;
