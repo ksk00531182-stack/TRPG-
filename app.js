@@ -48,17 +48,28 @@ async function uploadAssets() {
   const files = [...assetFiles.files];
   if (!files.length) return;
   assetStatus.textContent = `${files.length}件をアップロード中...`;
-  for (const file of files) {
-    const permission = await fetch('/api/assets/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ category: assetCategory.value, name: file.name, type: file.type, size: file.size }) });
-    if (!permission.ok) { assetStatus.textContent = 'アップロード許可を取得できません'; return; }
-    const { asset, uploadUrl } = await permission.json();
-    const upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
-    if (!upload.ok) { assetStatus.textContent = `${file.name} のアップロードに失敗しました`; return; }
-    socket.emit('asset-added', asset);
+  try {
+    for (const file of files) {
+      const permission = await fetch('/api/assets/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ category: assetCategory.value, name: file.name, type: file.type, size: file.size }) });
+      if (!permission.ok) { throw new Error(`アップロード許可を取得できません (${permission.status})`); }
+      const { asset, uploadUrl } = await permission.json();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 120000);
+      let upload;
+      try {
+        upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file, signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      if (!upload.ok) { throw new Error(`${file.name} のアップロードに失敗しました (${upload.status})`); }
+      socket.emit('asset-added', asset);
+    }
+    assetFiles.value = '';
+    assetStatus.textContent = 'アップロード完了';
+    loadAssets();
+  } catch (error) {
+    assetStatus.textContent = error.name === 'AbortError' ? 'アップロードがタイムアウトしました' : `アップロード失敗: ${error.message}`;
   }
-  assetFiles.value = '';
-  assetStatus.textContent = 'アップロード完了';
-  loadAssets();
 }
 
 $('#joinForm').addEventListener('submit', (event) => {

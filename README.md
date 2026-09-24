@@ -23,3 +23,17 @@ R2_BUCKET_NAME=R2 bucket name
 ```
 
 R2バケットのCORSには、TRPG StudioのURLからの `PUT` と `GET` を許可してください。開発中は `http://localhost:3000`、Renderでは実際のサービスURLを許可します。認証情報はブラウザやリポジトリへ書き込まないでください。
+
+R2のCORS設定例:
+
+```json
+[
+	{
+		"AllowedOrigins": ["http://localhost:3000", "https://あなたのサービス.onrender.com"],
+		"AllowedMethods": ["GET", "PUT", "HEAD"],
+		"AllowedHeaders": ["Content-Type"],
+		"ExposeHeaders": ["ETag"],
+		"MaxAgeSeconds": 3600
+	}
+]
+```
