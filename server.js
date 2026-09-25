@@ -198,6 +198,14 @@ const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } 
 loadPersistedRooms();
 
 function broadcastMembers(id) { io.to(`room:${id}`).emit('members', [...getRoom(id).members.values()]); }
+function canSeeMessage(message, member) {
+  if (message.scope !== 'private') return true;
+  if (member.role === 'gm') return true;
+  return message.senderPlayerId === member.playerId
+    || message.targetPlayerId === member.playerId
+    || message.senderId === member.id
+    || message.targetId === member.id;
+}
 
 function clearSocketRoom(socket) {
   const previousRoomId = socket.data.roomId;
@@ -238,7 +246,7 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, { roomId: id, role: member.role, socketId: socket.id });
   socket.data.sessionToken = token;
-  socket.emit('history', room.messages);
+  socket.emit('history', room.messages.filter((message) => canSeeMessage(message, member)));
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
@@ -304,16 +312,39 @@ io.on('connection', (socket) => {
     joinRoom(socket, id, member, acknowledge, inviteToken);
   });
 
-  socket.on('send-message', (value) => {
+  socket.on('send-message', (payload = {}) => {
     const id = socket.data.roomId;
-    const text = cleanText(value, 2000);
+    const text = cleanText(typeof payload === 'string' ? payload : payload.text, 2000);
     if (!id || !text || !socket.data.member) return;
-    const message = { id: `${Date.now()}-${socket.id}`, text, name: socket.data.member.name, role: socket.data.member.role, time: new Date().toISOString() };
     const room = getRoom(id);
+    const targetValue = cleanText(typeof payload === 'string' ? '' : payload.targetId, 80);
+    const targetMember = targetValue
+      ? [...room.members.values()].find((member) => member.id === targetValue || member.playerId === targetValue)
+      : null;
+    if (targetValue && !targetMember) return;
+    const message = {
+      id: `${Date.now()}-${socket.id}`,
+      text,
+      name: socket.data.member.name,
+      role: socket.data.member.role,
+      scope: targetMember ? 'private' : 'public',
+      senderId: socket.id,
+      senderPlayerId: socket.data.member.playerId || '',
+      targetId: targetMember?.id || '',
+      targetPlayerId: targetMember?.playerId || '',
+      targetName: targetMember?.name || '',
+      time: new Date().toISOString()
+    };
     room.messages.push(message);
     if (room.messages.length > 200) room.messages.shift();
     touchRoom(room);
-    io.to(`room:${id}`).emit('message', message);
+    if (!targetMember) {
+      io.to(`room:${id}`).emit('message', message);
+      return;
+    }
+    const recipientIds = new Set([socket.id, targetMember.id]);
+    for (const member of room.members.values()) if (member.role === 'gm') recipientIds.add(member.id);
+    for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
   socket.on('typing', (isTyping) => {

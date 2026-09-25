@@ -24,6 +24,7 @@ const elements = {
   roomLabel: $('#roomLabel'),
   roomSystem: $('#roomSystem'),
   memberList: $('#memberList'),
+  messageTarget: $('#messageTarget'),
   messageList: $('#messageList'),
   messageForm: $('#messageForm'),
   messageInput: $('#messageInput'),
@@ -204,13 +205,19 @@ function roomInviteUrl(savedRoom) {
 function addMessage(message) {
   if (!elements.messageList || !message) return;
   const item = document.createElement('article');
-  item.className = `message ${message.role === 'gm' ? 'is-gm' : ''}`;
+  item.className = `message ${message.role === 'gm' ? 'is-gm' : ''} ${message.scope === 'private' ? 'is-private' : ''}`;
   
   const meta = document.createElement('div');
   meta.className = 'message-meta';
   
   const nameStrong = document.createElement('strong');
   nameStrong.textContent = message.name || '';
+
+  if (message.scope === 'private') {
+    const privateLabel = document.createElement('small');
+    privateLabel.textContent = message.targetName ? `個別: ${message.targetName}` : '個別チャット';
+    meta.appendChild(privateLabel);
+  }
   
   const timeEl = document.createElement('time');
   timeEl.textContent = new Date(message.time || Date.now()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
@@ -244,6 +251,20 @@ function renderMembers(members) {
     li.append(presence, nameSpan, roleSmall);
     elements.memberList.appendChild(li);
   });
+  if (elements.messageTarget) {
+    elements.messageTarget.innerHTML = '';
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = '全体チャット';
+    elements.messageTarget.appendChild(allOption);
+    members.forEach((member) => {
+      if (member.role === 'pc' && member.playerId === state.playerId) return;
+      const option = document.createElement('option');
+      option.value = member.playerId || member.id;
+      option.textContent = `${member.name || '名前未設定'}${member.role === 'gm' ? '（GM）' : ''}`;
+      elements.messageTarget.appendChild(option);
+    });
+  }
 }
 
 function renderAssets(assets) {
@@ -499,8 +520,9 @@ if (elements.messageForm) {
     if (!elements.messageInput) return;
     const text = elements.messageInput.value.trim();
     if (!text) return;
-    socket.emit('send-message', text);
+    socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
     elements.messageInput.value = '';
+    if (elements.messageTarget) elements.messageTarget.value = '';
     socket.emit('typing', false);
   });
 }
