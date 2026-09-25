@@ -1,370 +1,305 @@
-const params = new URLSearchParams(location.search);
-const socket = io();
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { Server } = require('socket.io');
 
-const $ = (selector) => document.querySelector(selector);
-const entry = $('#entry');
-const room = $('#room');
-const joinForm = $('#joinForm');
-const roomIdInput = $('#roomId');
-const roomTitleInput = $('#roomTitle');
-const systemIdInput = $('#systemId');
-const systemLabel = $('#systemLabel');
-const nameInput = $('#name');
-const nameLabel = $('#nameLabel');
-const joinButton = $('#joinButton');
-const roomListButton = $('#roomListButton');
-const entryHint = $('#entryHint');
-const roomLibrary = $('#roomLibrary');
-const roomList = $('#roomList');
-const roomLabel = $('#roomLabel');
-const roomSystem = $('#roomSystem');
-const memberList = $('#memberList');
-const messageList = $('#messageList');
-const messageForm = $('#messageForm');
-const messageInput = $('#messageInput');
-const status = $('#status');
-const typing = $('#typing');
-const assetList = $('#assetList');
-const assetStatus = $('#assetStatus');
-const assetUpload = $('#assetUpload');
-const assetCategory = $('#assetCategory');
-const assetFiles = $('#assetFiles');
+const port = Number(process.env.PORT) || 3000;
+const root = __dirname;
+const rooms = new Map();
+const sessions = new Map();
+const roomStorePath = process.env.TRPG_ROOM_STORE || path.join(root, 'rooms.json');
 
-let typingTimer = null;
-let sessionToken = '';
-let currentRole = 'pc';
-let currentRoomId = '';
-let inviteToken = params.get('invite') || '';
-const isInviteMode = Boolean(params.get('room') && inviteToken);
-const roomStorageKey = 'trpg-studio-gm-rooms';
+const contentTypes = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8'
+};
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }[char]));
+const maxAssetSize = 25 * 1024 * 1024;
+const assetCategories = new Set(['characters', 'materials', 'icons', 'backgrounds', 'bgm']);
+const allowedAssetTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'audio/mpeg', 'audio/ogg', 'audio/wav']);
+
+const r2Configured = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME'].every((key) => Boolean(process.env[key]));
+const r2 = r2Configured ? new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY }
+}) : null;
+
+const trpgSystems = Object.freeze({
+  coc: Object.freeze({ id: 'coc', name: 'クトゥルフ神話TRPG' }),
+  emoklore: Object.freeze({ id: 'emoklore', name: 'エモクロアTRPG' })
+});
+
+function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
+function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
+
+function createRoomId() {
+  let id;
+  do {
+    id = crypto.randomBytes(9).toString('base64url');
+  } while (rooms.has(id));
+  return id;
 }
 
-function getSavedRooms() {
-  try { return JSON.parse(localStorage.getItem(roomStorageKey) || '[]'); } catch { return []; }
-}
-
-function saveRooms(rooms) { localStorage.setItem(roomStorageKey, JSON.stringify(rooms)); }
-
-function saveRoom(roomRecord) {
-  const rooms = getSavedRooms().filter((r) => r.roomId !== roomRecord.roomId);
-  rooms.unshift(roomRecord);
-  saveRooms(rooms);
-  renderRoomList();
-}
-
-function formatDate(value) {
-  return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
-}
-
-function formatRelativeDate(value) {
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
-  if (days <= 0) return '今日';
-  if (days === 1) return '昨日';
-  if (days < 7) return `${days}日前`;
-  if (days < 31) return `${Math.floor(days / 7)}週間前`;
-  if (days < 365) return `${Math.floor(days / 30)}か月前`;
-  return `${Math.floor(days / 365)}年前`;
-}
-
-function renderRoomList() {
-  const rooms = getSavedRooms();
-  if (!rooms.length) {
-    roomList.innerHTML = '<p class="empty-rooms">ルームがまだ作成されていません。</p>';
-    return;
+function getRoom(id, systemId = 'coc', title = '') {
+  if (!rooms.has(id)) {
+    const now = new Date().toISOString();
+    rooms.set(id, { messages: [], members: new Map(), assets: new Map(), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
-  roomList.innerHTML = rooms.map((savedRoom) => `
-    <article class="room-card" data-room-id="${escapeHtml(savedRoom.roomId)}">
-      <div class="room-card-heading">
-        <h3>■ ${escapeHtml(savedRoom.roomTitle)}</h3>
-        <span>${escapeHtml(savedRoom.systemName)}</span>
-      </div>
-      <p class="room-meta">作成日: ${formatDate(savedRoom.createdAt)} <b>|</b> 最終更新: ${formatRelativeDate(savedRoom.updatedAt)}</p>
-      <div class="room-actions">
-        <button type="button" data-action="enter">部屋に入る</button>
-        <button type="button" data-action="copy">招待URLコピー</button>
-        <button type="button" data-action="duplicate">複製</button>
-        <button type="button" data-action="delete" class="danger">削除</button>
-      </div>
-    </article>
-  `).join('');
+  return rooms.get(id);
 }
 
-function findSavedRoom(roomId) { return getSavedRooms().find((r) => r.roomId === roomId); }
-
-function updateSavedRoom(roomId, changes) {
-  const rooms = getSavedRooms().map((r) => r.roomId === roomId ? { ...r, ...changes } : r);
-  saveRooms(rooms);
-  renderRoomList();
+function persistRooms() {
+  const savedRooms = [...rooms.entries()].map(([id, room]) => ({
+    id,
+    messages: room.messages,
+    assets: [...room.assets.entries()],
+    inviteToken: room.inviteToken,
+    gmToken: room.gmToken,
+    systemId: room.systemId,
+    title: room.title,
+    createdAt: room.createdAt,
+    updatedAt: room.updatedAt
+  }));
+  try { fs.writeFileSync(roomStorePath, JSON.stringify(savedRooms)); } catch (error) { console.error('Could not persist TRPG rooms:', error.message); }
 }
 
-function roomInviteUrl(savedRoom) {
-  return `${location.origin}${location.pathname}?room=${encodeURIComponent(savedRoom.roomId)}&invite=${encodeURIComponent(savedRoom.inviteToken)}`;
-}
-
-function addMessage(message) {
-  const item = document.createElement('article');
-  item.className = `message ${message.role === 'gm' ? 'is-gm' : ''}`;
-  item.innerHTML = `
-    <div class="message-meta">
-      <strong>${escapeHtml(message.name)}</strong>
-      <time>${new Date(message.time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</time>
-    </div>
-    <p>${escapeHtml(message.text).replace(/\n/g, '<br>')}</p>
-  `;
-  messageList.append(item);
-  messageList.scrollTop = messageList.scrollHeight;
-}
-
-function renderMembers(members) {
-  memberList.innerHTML = members.map((member) => `
-    <li>
-      <span class="presence"></span>
-      <span>${escapeHtml(member.name)}</span>
-      <small>${member.role === 'gm' ? 'GM' : 'PC'}</small>
-    </li>
-  `).join('');
-}
-
-function renderAssets(assets) {
-  if (!assets.length) {
-    assetList.innerHTML = '<p class="empty-assets">このルームには素材がありません。</p>';
-    return;
-  }
-  assetList.innerHTML = assets.map((asset) => {
-    const preview = asset.type?.startsWith('image/')
-      ? `<img src="${asset.url}" alt="${escapeHtml(asset.name)}" loading="lazy">`
-      : '<span class="asset-audio">♫</span>';
-    const remove = currentRole === 'gm'
-      ? `<button class="asset-delete" type="button" data-key="${encodeURIComponent(asset.key)}">削除</button>`
-      : '';
-    return `
-      <article class="asset-card">
-        <a href="${asset.url}" target="_blank" rel="noreferrer">${preview}</a>
-        <div>
-          <strong>${escapeHtml(asset.name)}</strong>
-          <small>${escapeHtml(asset.category)}</small>
-        </div>
-        ${remove}
-      </article>
-    `;
-  }).join('');
-}
-
-async function loadAssets() {
+function loadPersistedRooms() {
   try {
-    const response = await fetch('/api/assets', { headers: { Authorization: `Bearer ${sessionToken}` } });
-    if (!response.ok) {
-      assetStatus.textContent = response.status === 503 ? 'R2未設定' : '素材を取得できません';
-      return;
-    }
-    const data = await response.json();
-    renderAssets(data.assets || []);
-    assetStatus.textContent = '';
-  } catch {
-    assetStatus.textContent = '通信エラーが発生しました';
-  }
-}
-
-async function uploadAssets() {
-  const files = [...assetFiles.files];
-  if (!files.length) return;
-  assetStatus.textContent = `${files.length}件をアップロード中...`;
-  try {
-    for (const file of files) {
-      const permission = await fetch('/api/assets/upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-        body: JSON.stringify({ category: assetCategory.value, name: file.name, type: file.type, size: file.size })
+    const savedRooms = JSON.parse(fs.readFileSync(roomStorePath, 'utf8'));
+    let migrated = false;
+    for (const savedRoom of savedRooms) {
+      if (!normalizeRoomId(savedRoom.id) || !trpgSystems[savedRoom.systemId] || typeof savedRoom.inviteToken !== 'string') continue;
+      const gmToken = savedRoom.gmToken || crypto.randomBytes(32).toString('hex');
+      migrated ||= !savedRoom.gmToken;
+      rooms.set(savedRoom.id, {
+        messages: Array.isArray(savedRoom.messages) ? savedRoom.messages : [],
+        members: new Map(),
+        assets: new Map(savedRoom.assets || []),
+        inviteToken: savedRoom.inviteToken,
+        gmToken,
+        systemId: savedRoom.systemId,
+        title: cleanText(savedRoom.title, 80),
+        createdAt: savedRoom.createdAt,
+        updatedAt: savedRoom.updatedAt
       });
-      if (!permission.ok) throw new Error(`アップロード許可を取得できません (${permission.status})`);
-
-      const { asset, uploadUrl } = await permission.json();
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 120000);
-
-      try {
-        const upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file, signal: controller.signal });
-        if (!upload.ok) throw new Error(`${file.name} のアップロードに失敗しました (${upload.status})`);
-      } finally {
-        window.clearTimeout(timeout);
-      }
-      socket.emit('asset-added', asset);
     }
-    assetFiles.value = '';
-    assetStatus.textContent = 'アップロード完了';
-    loadAssets();
+    if (migrated) persistRooms();
   } catch (error) {
-    assetStatus.textContent = error.name === 'AbortError'
-      ? 'アップロードがタイムアウトしました'
-      : error.message === 'Failed to fetch'
-        ? 'R2接続失敗: CORS設定を確認してください'
-        : `アップロード失敗: ${error.message}`;
+    if (error.code !== 'ENOENT') console.error('Could not load TRPG rooms:', error.message);
   }
 }
 
-function enterRoom(result, role) {
-  currentRoomId = result.roomId;
-  roomLabel.textContent = result.roomTitle || result.roomId;
-  roomSystem.textContent = result.systemName || '';
-  currentRole = role;
-  sessionToken = result.sessionToken;
-  inviteToken = result.inviteToken || inviteToken;
+function touchRoom(room) { room.updatedAt = new Date().toISOString(); persistRooms(); }
 
-  if (role === 'gm') {
-    saveRoom({
-      roomId: result.roomId,
-      roomTitle: result.roomTitle,
-      systemId: result.systemId,
-      systemName: result.systemName,
-      inviteToken,
-      gmToken: result.gmToken,
-      gmName: nameInput.value.trim(),
-      createdAt: result.createdAt,
-      updatedAt: result.updatedAt
-    });
-  }
-
-  assetUpload.hidden = currentRole !== 'gm' || !result.r2Configured;
-  entry.hidden = true;
-  room.hidden = false;
-
-  const currentUrl = role === 'gm'
-    ? location.pathname
-    : `?room=${encodeURIComponent(result.roomId)}&invite=${encodeURIComponent(inviteToken)}`;
-  history.replaceState({}, '', currentUrl);
-
-  messageInput.focus();
-  loadAssets();
+function sendJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  response.end(JSON.stringify(payload));
 }
 
-// イベントリスナー設定
-joinForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const eventName = isInviteMode ? 'join-room' : 'create-room';
-  const payload = isInviteMode
-    ? { roomId: roomIdInput.value.trim(), inviteToken, name: nameInput.value.trim() }
-    : { systemId: systemIdInput.value, roomTitle: roomTitleInput.value.trim(), name: nameInput.value.trim() };
+function readJson(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => { body += chunk; if (body.length > 64 * 1024) reject(new Error('payload-too-large')); });
+    request.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch { reject(new Error('invalid-json')); } });
+    request.on('error', reject);
+  });
+}
 
-  socket.emit(eventName, payload, (result) => {
-    if (!result?.ok) {
-      status.textContent = result?.error || '参加できませんでした';
-      return;
+function getSession(request) {
+  const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+  return token ? sessions.get(token) : null;
+}
+
+function safeFileName(value) {
+  return cleanText(value, 100).replace(/[^A-Za-z0-9._-]/g, '_') || 'asset';
+}
+
+async function handleAssetApi(request, response, requestPath) {
+  if (!requestPath.startsWith('/api/assets')) return false;
+  if (!r2) { sendJson(response, 503, { error: 'R2 is not configured on this server.' }); return true; }
+  const session = getSession(request);
+  if (!session) { sendJson(response, 401, { error: 'Room session is required.' }); return true; }
+  const room = getRoom(session.roomId);
+
+  if (request.method === 'GET' && requestPath === '/api/assets') {
+    const result = await r2.send(new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET_NAME, Prefix: `rooms/${session.roomId}/` }));
+    const assets = await Promise.all((result.Contents || []).map(async (object) => {
+      const asset = room.assets.get(object.Key) || { key: object.Key, name: path.basename(object.Key), category: object.Key.split('/')[2] || 'materials', size: object.Size, type: '' };
+      return { ...asset, size: object.Size, updatedAt: object.LastModified, url: await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: object.Key }), { expiresIn: 3600 }) };
+    }));
+    sendJson(response, 200, { assets });
+    return true;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/assets/upload-url') {
+    if (session.role !== 'gm') { sendJson(response, 403, { error: 'GM only.' }); return true; }
+    const payload = await readJson(request);
+    const category = cleanText(payload.category, 30);
+    const name = safeFileName(payload.name);
+    const type = cleanText(payload.type, 100);
+    const size = Number(payload.size);
+    if (!assetCategories.has(category) || !allowedAssetTypes.has(type) || !Number.isInteger(size) || size < 1 || size > maxAssetSize) {
+      sendJson(response, 400, { error: 'Unsupported category, file type, or size.' });
+      return true;
     }
-    enterRoom(result, isInviteMode ? 'pc' : 'gm');
-  });
-});
-
-$('#copyLink').addEventListener('click', async () => {
-  await navigator.clipboard.writeText(`${location.origin}${location.pathname}?room=${encodeURIComponent(currentRoomId)}&invite=${encodeURIComponent(inviteToken)}`);
-  status.textContent = 'PC参加用URLをコピーしました';
-});
-
-roomListButton.addEventListener('click', () => {
-  roomLibrary.hidden = !roomLibrary.hidden;
-  roomListButton.textContent = roomLibrary.hidden ? 'ルーム一覧' : 'ルーム一覧を閉じる';
-  if (!roomLibrary.hidden) renderRoomList();
-});
-
-roomLibrary.addEventListener('click', (event) => {
-  if (event.target === roomLibrary) {
-    roomLibrary.hidden = true;
-    roomListButton.textContent = 'ルーム一覧';
+    const key = `rooms/${session.roomId}/${category}/${crypto.randomUUID()}-${name}`;
+    const uploadUrl = await getSignedUrl(r2, new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, ContentType: type }), { expiresIn: 600 });
+    room.assets.set(key, { key, name, category, type, size });
+    touchRoom(room);
+    sendJson(response, 200, { asset: { key, name, category, type, size }, uploadUrl });
+    return true;
   }
-});
 
-roomList.addEventListener('click', (event) => {
-  const button = event.target.closest('button[data-action]');
-  const savedRoom = button && findSavedRoom(button.closest('.room-card').dataset.roomId);
-  if (!savedRoom) return;
-
-  const action = button.dataset.action;
-  if (action === 'copy') {
-    navigator.clipboard.writeText(roomInviteUrl(savedRoom));
-    status.textContent = 'PC参加用URLをコピーしました';
-  } else if (action === 'enter') {
-    socket.emit('resume-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームに入れませんでした'; return; }
-      enterRoom(result, 'gm');
-    });
-  } else if (action === 'duplicate') {
-    socket.emit('duplicate-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームを複製できませんでした'; return; }
-      saveRoom({ ...result, gmName: savedRoom.gmName });
-      status.textContent = 'ルームを複製しました';
-    });
-  } else if (action === 'delete' && window.confirm(`「${savedRoom.roomTitle}」を削除しますか？`)) {
-    socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームを削除できませんでした'; return; }
-      saveRooms(getSavedRooms().filter((r) => r.roomId !== savedRoom.roomId));
-      renderRoomList();
-      status.textContent = 'ルームを削除しました';
-    });
+  if (request.method === 'DELETE' && requestPath === '/api/assets') {
+    if (session.role !== 'gm') { sendJson(response, 403, { error: 'GM only.' }); return true; }
+    const payload = await readJson(request);
+    const key = typeof payload.key === 'string' && payload.key.startsWith(`rooms/${session.roomId}/`) ? payload.key : null;
+    if (!key) { sendJson(response, 400, { error: 'Invalid asset key.' }); return true; }
+    await r2.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
+    room.assets.delete(key);
+    touchRoom(room);
+    io.to(`room:${session.roomId}`).emit('asset-deleted', { key });
+    sendJson(response, 200, { ok: true });
+    return true;
   }
-});
-
-messageForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text) return;
-  socket.emit('send-message', text);
-  messageInput.value = '';
-  socket.emit('typing', false);
-});
-
-messageInput.addEventListener('input', () => {
-  socket.emit('typing', true);
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => socket.emit('typing', false), 900);
-});
-
-// Socketイベント受信（一元管理）
-socket.on('connect', () => { status.textContent = '接続中'; });
-socket.on('disconnect', () => { status.textContent = '接続が切れています'; });
-socket.on('history', (messages) => messages.forEach(addMessage));
-socket.on('message', (message) => {
-  addMessage(message);
-  if (currentRole === 'gm') {
-    updateSavedRoom(currentRoomId, { updatedAt: new Date().toISOString() });
-  }
-});
-socket.on('members', renderMembers);
-socket.on('typing', ({ name, isTyping }) => { typing.textContent = isTyping ? `${name} が入力中...` : ''; });
-socket.on('asset-added', loadAssets);
-socket.on('asset-deleted', loadAssets);
-
-// 招待モード時の初期UI調整
-if (params.get('room')) {
-  roomIdInput.value = params.get('room');
-  if (isInviteMode) {
-    roomListButton.hidden = true;
-    roomLibrary.hidden = true;
-    systemLabel.hidden = true;
-    const roomTitleLabel = roomTitleInput.closest('label');
-    if (roomTitleLabel) roomTitleLabel.hidden = true;
-    const nameLabelSpan = nameLabel.querySelector('span');
-    if (nameLabelSpan) nameLabelSpan.textContent = '表示名';
-    roomIdInput.readOnly = true;
-    systemIdInput.disabled = true;
-    joinButton.textContent = 'ルームに入る →';
-    entryHint.textContent = 'GMから共有された招待URLです。表示名を入力して入室してください。';
-  }
+  return false;
 }
 
-assetFiles.addEventListener('change', uploadAssets);
-assetList.addEventListener('click', async (event) => {
-  const button = event.target.closest('.asset-delete');
-  if (!button) return;
-  const response = await fetch('/api/assets', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-    body: JSON.stringify({ key: decodeURIComponent(button.dataset.key) })
-  });
-  if (response.ok) loadAssets();
+const server = http.createServer((request, response) => {
+  const requestPath = new URL(request.url, `http://${request.headers.host || 'localhost'}`).pathname;
+  handleAssetApi(request, response, requestPath).then((handled) => {
+    if (handled) return;
+    const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\//, '');
+    const filePath = path.resolve(root, relativePath);
+    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) { response.writeHead(404); response.end('Not Found'); return; }
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not Found'); return; }
+    response.writeHead(200, { 'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    fs.createReadStream(filePath).pipe(response);
+  }).catch((error) => { console.error(error); sendJson(response, 500, { error: 'Asset operation failed.' }); });
 });
 
-renderRoomList();
+const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+loadPersistedRooms();
+
+function broadcastMembers(id) { io.to(`room:${id}`).emit('members', [...getRoom(id).members.values()]); }
+
+function clearSocketRoom(socket) {
+  const previousRoomId = socket.data.roomId;
+  if (socket.data.sessionToken) sessions.delete(socket.data.sessionToken);
+  if (previousRoomId) {
+    const previousRoom = rooms.get(previousRoomId);
+    previousRoom?.members.delete(socket.id);
+    if (previousRoom) broadcastMembers(previousRoomId);
+  }
+  socket.data.roomId = null;
+  socket.data.member = null;
+  socket.data.sessionToken = null;
+}
+
+function joinRoom(socket, id, member, acknowledge, inviteToken) {
+  const room = getRoom(id);
+  if (inviteToken !== room.inviteToken) { acknowledge?.({ ok: false, error: '有効なルーム招待URLが必要です。' }); return; }
+  clearSocketRoom(socket);
+  socket.join(`room:${id}`);
+  socket.data.roomId = id;
+  socket.data.member = member;
+  room.members.set(socket.id, member);
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { roomId: id, role: member.role, socketId: socket.id });
+  socket.data.sessionToken = token;
+  socket.emit('history', room.messages);
+  broadcastMembers(id);
+  const system = trpgSystems[room.systemId];
+  const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+}
+
+io.on('connection', (socket) => {
+  socket.on('create-room', ({ systemId, roomTitle, name } = {}, acknowledge) => {
+    const system = trpgSystems[systemId];
+    const title = cleanText(roomTitle, 80);
+    const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
+    if (!system || !title || !member.name) { acknowledge?.({ ok: false, error: 'システム、ルームタイトル、GM名を入力してください。' }); return; }
+    const id = createRoomId();
+    const room = getRoom(id, system.id, title);
+    room.inviteToken = crypto.randomBytes(32).toString('hex');
+    room.gmToken = crypto.randomBytes(32).toString('hex');
+    persistRooms();
+    joinRoom(socket, id, member, (result) => acknowledge?.({ ...result, inviteToken: room.inviteToken }), room.inviteToken);
+  });
+
+  socket.on('resume-room', ({ roomId, gmToken, inviteToken, name } = {}, acknowledge) => {
+    const id = normalizeRoomId(roomId);
+    const room = id && rooms.get(id);
+    const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
+    const hasValidManagementToken = room && (room.gmToken === gmToken || (!gmToken && room.inviteToken === inviteToken));
+    if (!hasValidManagementToken || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
+    joinRoom(socket, id, member, acknowledge, room.inviteToken);
+  });
+
+  socket.on('duplicate-room', ({ roomId, gmToken } = {}, acknowledge) => {
+    const id = normalizeRoomId(roomId);
+    const sourceRoom = id && rooms.get(id);
+    if (!sourceRoom || sourceRoom.gmToken !== gmToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    const duplicateId = createRoomId();
+    const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80));
+    duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
+    duplicateRoom.gmToken = crypto.randomBytes(32).toString('hex');
+    persistRooms();
+    const system = trpgSystems[duplicateRoom.systemId];
+    acknowledge?.({ ok: true, roomId: duplicateId, roomTitle: duplicateRoom.title, systemId: system.id, systemName: system.name, inviteToken: duplicateRoom.inviteToken, gmToken: duplicateRoom.gmToken, createdAt: duplicateRoom.createdAt, updatedAt: duplicateRoom.updatedAt });
+  });
+
+  socket.on('delete-room', ({ roomId, gmToken } = {}, acknowledge) => {
+    const id = normalizeRoomId(roomId);
+    const room = id && rooms.get(id);
+    if (!room || room.gmToken !== gmToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    rooms.delete(id);
+    for (const [token, session] of sessions) if (session.roomId === id) sessions.delete(token);
+    io.to(`room:${id}`).emit('room-deleted');
+    persistRooms();
+    acknowledge?.({ ok: true });
+  });
+
+  socket.on('join-room', ({ roomId, inviteToken, name } = {}, acknowledge) => {
+    const id = normalizeRoomId(roomId);
+    const member = { id: socket.id, name: cleanText(name, 40), role: 'pc' };
+    if (!id || !member.name || typeof inviteToken !== 'string') { acknowledge?.({ ok: false, error: '有効な招待URLと表示名が必要です。' }); return; }
+    if (!rooms.has(id)) { acknowledge?.({ ok: false, error: 'ルームが存在しないか、GMがまだ作成していません。' }); return; }
+    joinRoom(socket, id, member, acknowledge, inviteToken);
+  });
+
+  socket.on('send-message', (value) => {
+    const id = socket.data.roomId;
+    const text = cleanText(value, 2000);
+    if (!id || !text || !socket.data.member) return;
+    const message = { id: `${Date.now()}-${socket.id}`, text, name: socket.data.member.name, role: socket.data.member.role, time: new Date().toISOString() };
+    const room = getRoom(id);
+    room.messages.push(message);
+    if (room.messages.length > 200) room.messages.shift();
+    touchRoom(room);
+    io.to(`room:${id}`).emit('message', message);
+  });
+
+  socket.on('typing', (isTyping) => {
+    const id = socket.data.roomId;
+    if (id && socket.data.member) socket.to(`room:${id}`).emit('typing', { name: socket.data.member.name, isTyping: Boolean(isTyping) });
+  });
+
+  socket.on('asset-added', (asset) => {
+    const id = socket.data.roomId;
+    if (id && socket.data.member?.role === 'gm' && asset?.key?.startsWith(`rooms/${id}/`)) io.to(`room:${id}`).emit('asset-added', asset);
+  });
+
+  socket.on('disconnect', () => {
+    clearSocketRoom(socket);
+  });
+});
+
+server.listen(port, '0.0.0.0', () => console.log(`TRPG communication room listening on port ${port}`));

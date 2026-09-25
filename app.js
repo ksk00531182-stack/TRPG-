@@ -242,7 +242,6 @@ function enterRoom(result, role) {
   loadAssets();
 }
 
-// イベントリスナー設定
 joinForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const eventName = isInviteMode ? 'join-room' : 'create-room';
@@ -322,7 +321,6 @@ messageInput.addEventListener('input', () => {
   typingTimer = setTimeout(() => socket.emit('typing', false), 900);
 });
 
-// Socketイベント受信（一元管理）
 socket.on('connect', () => { status.textContent = '接続中'; });
 socket.on('disconnect', () => { status.textContent = '接続が切れています'; });
 socket.on('history', (messages) => messages.forEach(addMessage));
@@ -337,7 +335,6 @@ socket.on('typing', ({ name, isTyping }) => { typing.textContent = isTyping ? `$
 socket.on('asset-added', loadAssets);
 socket.on('asset-deleted', loadAssets);
 
-// 招待モード時の初期UI調整
 if (params.get('room')) {
   roomIdInput.value = params.get('room');
   if (isInviteMode) {
