@@ -32,8 +32,20 @@
         <div class="asset-list" id="assetList"><p class="empty-assets">素材を読み込んでいます...</p></div>
       </section>
       <div class="room-grid">
-        <aside class="members panel"><h3>参加者</h3><ul id="memberList"></ul></aside>
-        <section class="chat panel"><div class="chat-heading"><div><h3>セッション通信</h3></div><span id="typing"></span></div><div class="message-list" id="messageList" aria-live="polite"></div><form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="2" maxlength="2000" placeholder="メッセージを入力..." required></textarea><button type="submit">送信 <span>↗</span></button></form></section>
+        <section class="session-panel panel">
+          <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
+            <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
+            <button id="membersTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="membersPanel">参加者</button>
+          </div>
+          <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
+            <div class="chat-heading"><span id="typing"></span></div>
+            <div class="message-list" id="messageList" aria-live="polite"></div>
+            <form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="2" maxlength="2000" placeholder="メッセージを入力..." required></textarea><button type="submit">送信 <span>↗</span></button></form>
+          </div>
+          <div id="membersPanel" class="tab-panel" role="tabpanel" aria-labelledby="membersTab" hidden>
+            <ul id="memberList"></ul>
+          </div>
+        </section>
       </div>
     </section>
   </main>

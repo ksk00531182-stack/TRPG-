@@ -333,6 +333,7 @@ io.on('connection', (socket) => {
       targetId: targetMember?.id || '',
       targetPlayerId: targetMember?.playerId || '',
       targetName: targetMember?.name || '',
+      targetRole: targetMember?.role || '',
       time: new Date().toISOString()
     };
     room.messages.push(message);

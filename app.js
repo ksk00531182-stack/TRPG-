@@ -21,6 +21,10 @@ const elements = {
   entryHint: $('#entryHint'),
   roomLibrary: $('#roomLibrary'),
   roomList: $('#roomList'),
+  chatTab: $('#chatTab'),
+  membersTab: $('#membersTab'),
+  chatPanel: $('#chatPanel'),
+  membersPanel: $('#membersPanel'),
   roomLabel: $('#roomLabel'),
   roomSystem: $('#roomSystem'),
   memberList: $('#memberList'),
@@ -205,7 +209,8 @@ function roomInviteUrl(savedRoom) {
 function addMessage(message) {
   if (!elements.messageList || !message) return;
   const item = document.createElement('article');
-  item.className = `message ${message.role === 'gm' ? 'is-gm' : ''} ${message.scope === 'private' ? 'is-private' : ''}`;
+  const isGmPrivate = message.scope === 'private' && (message.role === 'gm' || message.targetRole === 'gm');
+  item.className = `message ${message.role === 'gm' ? 'is-gm' : ''} ${message.scope === 'private' ? 'is-private' : ''} ${isGmPrivate ? 'is-gm-private' : ''}`;
   
   const meta = document.createElement('div');
   meta.className = 'message-meta';
@@ -473,6 +478,18 @@ if (elements.roomLibrary) {
   });
 }
 
+function switchSessionTab(tab) {
+  const showChat = tab === 'chat';
+  elements.chatPanel.hidden = !showChat;
+  elements.membersPanel.hidden = showChat;
+  elements.chatTab.classList.toggle('is-active', showChat);
+  elements.membersTab.classList.toggle('is-active', !showChat);
+  elements.chatTab.setAttribute('aria-selected', String(showChat));
+  elements.membersTab.setAttribute('aria-selected', String(!showChat));
+}
+elements.chatTab?.addEventListener('click', () => switchSessionTab('chat'));
+elements.membersTab?.addEventListener('click', () => switchSessionTab('members'));
+
 if (elements.roomList) {
   elements.roomList.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action]');
@@ -528,6 +545,11 @@ if (elements.messageForm) {
 }
 
 if (elements.messageInput) {
+  elements.messageInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    elements.messageForm?.requestSubmit();
+  });
   elements.messageInput.addEventListener('input', () => {
     socket.emit('typing', true);
     clearTimeout(state.typingTimer);
