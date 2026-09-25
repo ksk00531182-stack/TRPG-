@@ -70,6 +70,7 @@ function persistRooms() {
 
 function loadPersistedRooms() {
   try {
+    if (!fs.existsSync(roomStorePath)) return;
     const savedRooms = JSON.parse(fs.readFileSync(roomStorePath, 'utf8'));
     let migrated = false;
     for (const savedRoom of savedRooms) {
@@ -90,7 +91,7 @@ function loadPersistedRooms() {
     }
     if (migrated) persistRooms();
   } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Could not load TRPG rooms:', error.message);
+    console.error('Could not load TRPG rooms:', error.message);
   }
 }
 
@@ -181,7 +182,7 @@ const server = http.createServer((request, response) => {
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not Found'); return; }
     response.writeHead(200, { 'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(filePath).pipe(response);
-  }).catch((error) => { console.error(error); sendJson(response, 500, { error: 'Asset operation failed.' }); });
+  }).catch((error) => { console.error('API Error:', error); sendJson(response, 500, { error: 'Asset operation failed.' }); });
 });
 
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
@@ -194,8 +195,10 @@ function clearSocketRoom(socket) {
   if (socket.data.sessionToken) sessions.delete(socket.data.sessionToken);
   if (previousRoomId) {
     const previousRoom = rooms.get(previousRoomId);
-    previousRoom?.members.delete(socket.id);
-    if (previousRoom) broadcastMembers(previousRoomId);
+    if (previousRoom) {
+      previousRoom.members.delete(socket.id);
+      broadcastMembers(previousRoomId);
+    }
   }
   socket.data.roomId = null;
   socket.data.member = null;

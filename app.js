@@ -2,66 +2,87 @@ const params = new URLSearchParams(location.search);
 const socket = io();
 
 const $ = (selector) => document.querySelector(selector);
-const entry = $('#entry');
-const room = $('#room');
-const joinForm = $('#joinForm');
-const roomIdInput = $('#roomId');
-const roomTitleInput = $('#roomTitle');
-const systemIdInput = $('#systemId');
-const systemLabel = $('#systemLabel');
-const nameInput = $('#name');
-const nameLabel = $('#nameLabel');
-const joinButton = $('#joinButton');
-const roomListButton = $('#roomListButton');
-const entryHint = $('#entryHint');
-const roomLibrary = $('#roomLibrary');
-const roomList = $('#roomList');
-const roomLabel = $('#roomLabel');
-const roomSystem = $('#roomSystem');
-const memberList = $('#memberList');
-const messageList = $('#messageList');
-const messageForm = $('#messageForm');
-const messageInput = $('#messageInput');
-const status = $('#status');
-const typing = $('#typing');
-const assetList = $('#assetList');
-const assetStatus = $('#assetStatus');
-const assetUpload = $('#assetUpload');
-const assetCategory = $('#assetCategory');
-const assetFiles = $('#assetFiles');
 
-let typingTimer = null;
-let sessionToken = '';
-let currentRole = 'pc';
-let currentRoomId = '';
-let inviteToken = params.get('invite') || '';
-const isInviteMode = Boolean(params.get('room') && inviteToken);
-const roomStorageKey = 'trpg-studio-gm-rooms';
+// DOM Elements
+const elements = {
+  entry: $('#entry'),
+  room: $('#room'),
+  joinForm: $('#joinForm'),
+  roomIdInput: $('#roomId'),
+  roomTitleInput: $('#roomTitle'),
+  systemIdInput: $('#systemId'),
+  systemLabel: $('#systemLabel'),
+  nameInput: $('#name'),
+  nameLabel: $('#nameLabel'),
+  joinButton: $('#joinButton'),
+  roomListButton: $('#roomListButton'),
+  entryHint: $('#entryHint'),
+  roomLibrary: $('#roomLibrary'),
+  roomList: $('#roomList'),
+  roomLabel: $('#roomLabel'),
+  roomSystem: $('#roomSystem'),
+  memberList: $('#memberList'),
+  messageList: $('#messageList'),
+  messageForm: $('#messageForm'),
+  messageInput: $('#messageInput'),
+  status: $('#status'),
+  typing: $('#typing'),
+  assetList: $('#assetList'),
+  assetStatus: $('#assetStatus'),
+  assetUpload: $('#assetUpload'),
+  assetCategory: $('#assetCategory'),
+  assetFiles: $('#assetFiles'),
+  copyLink: $('#copyLink') // null safeチェック対応
+};
+
+const state = {
+  typingTimer: null,
+  sessionToken: '',
+  currentRole: 'pc',
+  currentRoomId: '',
+  inviteToken: params.get('invite') || '',
+  isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
+  roomStorageKey: 'trpg-studio-gm-rooms'
+};
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }[char]));
+  }[char] || char));
 }
 
 function getSavedRooms() {
-  try { return JSON.parse(localStorage.getItem(roomStorageKey) || '[]'); } catch { return []; }
+  try {
+    const data = JSON.parse(localStorage.getItem(state.roomStorageKey) || '[]');
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
 }
 
-function saveRooms(rooms) { localStorage.setItem(roomStorageKey, JSON.stringify(rooms)); }
+function saveRooms(rooms) {
+  try {
+    localStorage.setItem(state.roomStorageKey, JSON.stringify(rooms));
+  } catch (e) {
+    console.error('Failed to save rooms to LocalStorage:', e);
+  }
+}
 
 function saveRoom(roomRecord) {
-  const rooms = getSavedRooms().filter((r) => r.roomId !== roomRecord.roomId);
+  if (!roomRecord || !roomRecord.roomId) return;
+  const rooms = getSavedRooms().filter((r) => r && r.roomId !== roomRecord.roomId);
   rooms.unshift(roomRecord);
   saveRooms(rooms);
   renderRoomList();
 }
 
 function formatDate(value) {
+  if (!value) return '-';
   return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
 }
 
 function formatRelativeDate(value) {
+  if (!value) return '-';
   const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
   if (days <= 0) return '今日';
   if (days === 1) return '昨日';
@@ -72,12 +93,13 @@ function formatRelativeDate(value) {
 }
 
 function renderRoomList() {
+  if (!elements.roomList) return;
   const rooms = getSavedRooms();
   if (!rooms.length) {
-    roomList.innerHTML = '<p class="empty-rooms">ルームがまだ作成されていません。</p>';
+    elements.roomList.innerHTML = '<p class="empty-rooms">ルームがまだ作成されていません。</p>';
     return;
   }
-  roomList.innerHTML = rooms.map((savedRoom) => `
+  elements.roomList.innerHTML = rooms.map((savedRoom) => `
     <article class="room-card" data-room-id="${escapeHtml(savedRoom.roomId)}">
       <div class="room-card-heading">
         <h3>■ ${escapeHtml(savedRoom.roomTitle)}</h3>
@@ -94,10 +116,10 @@ function renderRoomList() {
   `).join('');
 }
 
-function findSavedRoom(roomId) { return getSavedRooms().find((r) => r.roomId === roomId); }
+function findSavedRoom(roomId) { return getSavedRooms().find((r) => r && r.roomId === roomId); }
 
 function updateSavedRoom(roomId, changes) {
-  const rooms = getSavedRooms().map((r) => r.roomId === roomId ? { ...r, ...changes } : r);
+  const rooms = getSavedRooms().map((r) => (r && r.roomId === roomId) ? { ...r, ...changes } : r);
   saveRooms(rooms);
   renderRoomList();
 }
@@ -107,21 +129,23 @@ function roomInviteUrl(savedRoom) {
 }
 
 function addMessage(message) {
+  if (!elements.messageList || !message) return;
   const item = document.createElement('article');
   item.className = `message ${message.role === 'gm' ? 'is-gm' : ''}`;
   item.innerHTML = `
     <div class="message-meta">
       <strong>${escapeHtml(message.name)}</strong>
-      <time>${new Date(message.time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</time>
+      <time>${new Date(message.time || Date.now()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</time>
     </div>
     <p>${escapeHtml(message.text).replace(/\n/g, '<br>')}</p>
   `;
-  messageList.append(item);
-  messageList.scrollTop = messageList.scrollHeight;
+  elements.messageList.append(item);
+  elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
 function renderMembers(members) {
-  memberList.innerHTML = members.map((member) => `
+  if (!elements.memberList || !Array.isArray(members)) return;
+  elements.memberList.innerHTML = members.map((member) => `
     <li>
       <span class="presence"></span>
       <span>${escapeHtml(member.name)}</span>
@@ -131,20 +155,21 @@ function renderMembers(members) {
 }
 
 function renderAssets(assets) {
-  if (!assets.length) {
-    assetList.innerHTML = '<p class="empty-assets">このルームには素材がありません。</p>';
+  if (!elements.assetList) return;
+  if (!assets || !assets.length) {
+    elements.assetList.innerHTML = '<p class="empty-assets">このルームには素材がありません。</p>';
     return;
   }
-  assetList.innerHTML = assets.map((asset) => {
+  elements.assetList.innerHTML = assets.map((asset) => {
     const preview = asset.type?.startsWith('image/')
-      ? `<img src="${asset.url}" alt="${escapeHtml(asset.name)}" loading="lazy">`
+      ? `<img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy">`
       : '<span class="asset-audio">♫</span>';
-    const remove = currentRole === 'gm'
+    const remove = state.currentRole === 'gm'
       ? `<button class="asset-delete" type="button" data-key="${encodeURIComponent(asset.key)}">削除</button>`
       : '';
     return `
       <article class="asset-card">
-        <a href="${asset.url}" target="_blank" rel="noreferrer">${preview}</a>
+        <a href="${escapeHtml(asset.url)}" target="_blank" rel="noreferrer">${preview}</a>
         <div>
           <strong>${escapeHtml(asset.name)}</strong>
           <small>${escapeHtml(asset.category)}</small>
@@ -156,30 +181,36 @@ function renderAssets(assets) {
 }
 
 async function loadAssets() {
+  if (!state.sessionToken) return;
   try {
-    const response = await fetch('/api/assets', { headers: { Authorization: `Bearer ${sessionToken}` } });
+    const response = await fetch('/api/assets', { headers: { Authorization: `Bearer ${state.sessionToken}` } });
     if (!response.ok) {
-      assetStatus.textContent = response.status === 503 ? 'R2未設定' : '素材を取得できません';
+      if (elements.assetStatus) {
+        elements.assetStatus.textContent = response.status === 503 ? 'R2未設定' : '素材を取得できません';
+      }
       return;
     }
     const data = await response.json();
     renderAssets(data.assets || []);
-    assetStatus.textContent = '';
+    if (elements.assetStatus) elements.assetStatus.textContent = '';
   } catch {
-    assetStatus.textContent = '通信エラーが発生しました';
+    if (elements.assetStatus) elements.assetStatus.textContent = '通信エラーが発生しました';
   }
 }
 
 async function uploadAssets() {
-  const files = [...assetFiles.files];
+  if (!elements.assetFiles || !elements.assetFiles.files) return;
+  const files = [...elements.assetFiles.files];
   if (!files.length) return;
-  assetStatus.textContent = `${files.length}件をアップロード中...`;
+  
+  if (elements.assetStatus) elements.assetStatus.textContent = `${files.length}件をアップロード中...`;
+  
   try {
     for (const file of files) {
       const permission = await fetch('/api/assets/upload-url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-        body: JSON.stringify({ category: assetCategory.value, name: file.name, type: file.type, size: file.size })
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
+        body: JSON.stringify({ category: elements.assetCategory.value, name: file.name, type: file.type, size: file.size })
       });
       if (!permission.ok) throw new Error(`アップロード許可を取得できません (${permission.status})`);
 
@@ -195,25 +226,27 @@ async function uploadAssets() {
       }
       socket.emit('asset-added', asset);
     }
-    assetFiles.value = '';
-    assetStatus.textContent = 'アップロード完了';
+    elements.assetFiles.value = '';
+    if (elements.assetStatus) elements.assetStatus.textContent = 'アップロード完了';
     loadAssets();
   } catch (error) {
-    assetStatus.textContent = error.name === 'AbortError'
-      ? 'アップロードがタイムアウトしました'
-      : error.message === 'Failed to fetch'
-        ? 'R2接続失敗: CORS設定を確認してください'
-        : `アップロード失敗: ${error.message}`;
+    if (elements.assetStatus) {
+      elements.assetStatus.textContent = error.name === 'AbortError'
+        ? 'アップロードがタイムアウトしました'
+        : error.message === 'Failed to fetch'
+          ? 'R2接続失敗: CORS設定を確認してください'
+          : `アップロード失敗: ${error.message}`;
+    }
   }
 }
 
 function enterRoom(result, role) {
-  currentRoomId = result.roomId;
-  roomLabel.textContent = result.roomTitle || result.roomId;
-  roomSystem.textContent = result.systemName || '';
-  currentRole = role;
-  sessionToken = result.sessionToken;
-  inviteToken = result.inviteToken || inviteToken;
+  state.currentRoomId = result.roomId;
+  if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
+  if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
+  state.currentRole = role;
+  state.sessionToken = result.sessionToken;
+  state.inviteToken = result.inviteToken || state.inviteToken;
 
   if (role === 'gm') {
     saveRoom({
@@ -221,147 +254,183 @@ function enterRoom(result, role) {
       roomTitle: result.roomTitle,
       systemId: result.systemId,
       systemName: result.systemName,
-      inviteToken,
+      inviteToken: state.inviteToken,
       gmToken: result.gmToken,
-      gmName: nameInput.value.trim(),
+      gmName: elements.nameInput ? elements.nameInput.value.trim() : '',
       createdAt: result.createdAt,
       updatedAt: result.updatedAt
     });
   }
 
-  assetUpload.hidden = currentRole !== 'gm' || !result.r2Configured;
-  entry.hidden = true;
-  room.hidden = false;
+  if (elements.assetUpload) {
+    elements.assetUpload.hidden = state.currentRole !== 'gm' || !result.r2Configured;
+  }
+  if (elements.entry) elements.entry.hidden = true;
+  if (elements.room) elements.room.hidden = false;
 
   const currentUrl = role === 'gm'
     ? location.pathname
-    : `?room=${encodeURIComponent(result.roomId)}&invite=${encodeURIComponent(inviteToken)}`;
+    : `?room=${encodeURIComponent(result.roomId)}&invite=${encodeURIComponent(state.inviteToken)}`;
   history.replaceState({}, '', currentUrl);
 
-  messageInput.focus();
+  if (elements.messageInput) elements.messageInput.focus();
   loadAssets();
 }
 
-joinForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const eventName = isInviteMode ? 'join-room' : 'create-room';
-  const payload = isInviteMode
-    ? { roomId: roomIdInput.value.trim(), inviteToken, name: nameInput.value.trim() }
-    : { systemId: systemIdInput.value, roomTitle: roomTitleInput.value.trim(), name: nameInput.value.trim() };
+// Event Listeners Initialization
+if (elements.joinForm) {
+  elements.joinForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const eventName = state.isInviteMode ? 'join-room' : 'create-room';
+    const payload = state.isInviteMode
+      ? { roomId: elements.roomIdInput.value.trim(), inviteToken: state.inviteToken, name: elements.nameInput.value.trim() }
+      : { systemId: elements.systemIdInput.value, roomTitle: elements.roomTitleInput.value.trim(), name: elements.nameInput.value.trim() };
 
-  socket.emit(eventName, payload, (result) => {
-    if (!result?.ok) {
-      status.textContent = result?.error || '参加できませんでした';
-      return;
-    }
-    enterRoom(result, isInviteMode ? 'pc' : 'gm');
+    socket.emit(eventName, payload, (result) => {
+      if (!result?.ok) {
+        if (elements.status) elements.status.textContent = result?.error || '参加できませんでした';
+        return;
+      }
+      enterRoom(result, state.isInviteMode ? 'pc' : 'gm');
+    });
   });
+}
+
+if (elements.copyLink) {
+  elements.copyLink.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(`${location.origin}${location.pathname}?room=${encodeURIComponent(state.currentRoomId)}&invite=${encodeURIComponent(state.inviteToken)}`);
+      if (elements.status) elements.status.textContent = 'PC参加用URLをコピーしました';
+    } catch {
+      if (elements.status) elements.status.textContent = 'URLのコピーに失敗しました';
+    }
+  });
+}
+
+if (elements.roomListButton) {
+  elements.roomListButton.addEventListener('click', () => {
+    if (!elements.roomLibrary) return;
+    elements.roomLibrary.hidden = !elements.roomLibrary.hidden;
+    elements.roomListButton.textContent = elements.roomLibrary.hidden ? 'ルーム一覧' : 'ルーム一覧を閉じる';
+    if (!elements.roomLibrary.hidden) renderRoomList();
+  });
+}
+
+if (elements.roomLibrary) {
+  elements.roomLibrary.addEventListener('click', (event) => {
+    if (event.target === elements.roomLibrary) {
+      elements.roomLibrary.hidden = true;
+      if (elements.roomListButton) elements.roomListButton.textContent = 'ルーム一覧';
+    }
+  });
+}
+
+if (elements.roomList) {
+  elements.roomList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    const card = button?.closest('.room-card');
+    const savedRoom = card && findSavedRoom(card.dataset.roomId);
+    if (!savedRoom) return;
+
+    const action = button.dataset.action;
+    if (action === 'copy') {
+      navigator.clipboard.writeText(roomInviteUrl(savedRoom));
+      if (elements.status) elements.status.textContent = 'PC参加用URLをコピーしました';
+    } else if (action === 'enter') {
+      socket.emit('resume-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
+        if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームに入れませんでした'; return; }
+        enterRoom(result, 'gm');
+      });
+    } else if (action === 'duplicate') {
+      socket.emit('duplicate-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
+        if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームを複製できませんでした'; return; }
+        saveRoom({ ...result, gmName: savedRoom.gmName });
+        if (elements.status) elements.status.textContent = 'ルームを複製しました';
+      });
+    } else if (action === 'delete' && window.confirm(`「${savedRoom.roomTitle}」を削除しますか？`)) {
+      socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
+        if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームを削除できませんでした'; return; }
+        saveRooms(getSavedRooms().filter((r) => r.roomId !== savedRoom.roomId));
+        renderRoomList();
+        if (elements.status) elements.status.textContent = 'ルームを削除しました';
+      });
+    }
+  });
+}
+
+if (elements.messageForm) {
+  elements.messageForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = elements.messageInput.value.trim();
+    if (!text) return;
+    socket.emit('send-message', text);
+    elements.messageInput.value = '';
+    socket.emit('typing', false);
+  });
+}
+
+if (elements.messageInput) {
+  elements.messageInput.addEventListener('input', () => {
+    socket.emit('typing', true);
+    clearTimeout(state.typingTimer);
+    state.typingTimer = setTimeout(() => socket.emit('typing', false), 900);
+  });
+}
+
+// Socket Events
+socket.on('connect', () => { if (elements.status) elements.status.textContent = '接続中'; });
+socket.on('disconnect', () => { if (elements.status) elements.status.textContent = '接続が切れています'; });
+socket.on('history', (messages) => {
+  if (elements.messageList) elements.messageList.innerHTML = '';
+  if (Array.isArray(messages)) messages.forEach(addMessage);
 });
-
-$('#copyLink').addEventListener('click', async () => {
-  await navigator.clipboard.writeText(`${location.origin}${location.pathname}?room=${encodeURIComponent(currentRoomId)}&invite=${encodeURIComponent(inviteToken)}`);
-  status.textContent = 'PC参加用URLをコピーしました';
-});
-
-roomListButton.addEventListener('click', () => {
-  roomLibrary.hidden = !roomLibrary.hidden;
-  roomListButton.textContent = roomLibrary.hidden ? 'ルーム一覧' : 'ルーム一覧を閉じる';
-  if (!roomLibrary.hidden) renderRoomList();
-});
-
-roomLibrary.addEventListener('click', (event) => {
-  if (event.target === roomLibrary) {
-    roomLibrary.hidden = true;
-    roomListButton.textContent = 'ルーム一覧';
-  }
-});
-
-roomList.addEventListener('click', (event) => {
-  const button = event.target.closest('button[data-action]');
-  const savedRoom = button && findSavedRoom(button.closest('.room-card').dataset.roomId);
-  if (!savedRoom) return;
-
-  const action = button.dataset.action;
-  if (action === 'copy') {
-    navigator.clipboard.writeText(roomInviteUrl(savedRoom));
-    status.textContent = 'PC参加用URLをコピーしました';
-  } else if (action === 'enter') {
-    socket.emit('resume-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームに入れませんでした'; return; }
-      enterRoom(result, 'gm');
-    });
-  } else if (action === 'duplicate') {
-    socket.emit('duplicate-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームを複製できませんでした'; return; }
-      saveRoom({ ...result, gmName: savedRoom.gmName });
-      status.textContent = 'ルームを複製しました';
-    });
-  } else if (action === 'delete' && window.confirm(`「${savedRoom.roomTitle}」を削除しますか？`)) {
-    socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
-      if (!result?.ok) { status.textContent = result?.error || 'ルームを削除できませんでした'; return; }
-      saveRooms(getSavedRooms().filter((r) => r.roomId !== savedRoom.roomId));
-      renderRoomList();
-      status.textContent = 'ルームを削除しました';
-    });
-  }
-});
-
-messageForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text) return;
-  socket.emit('send-message', text);
-  messageInput.value = '';
-  socket.emit('typing', false);
-});
-
-messageInput.addEventListener('input', () => {
-  socket.emit('typing', true);
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => socket.emit('typing', false), 900);
-});
-
-socket.on('connect', () => { status.textContent = '接続中'; });
-socket.on('disconnect', () => { status.textContent = '接続が切れています'; });
-socket.on('history', (messages) => messages.forEach(addMessage));
 socket.on('message', (message) => {
   addMessage(message);
-  if (currentRole === 'gm') {
-    updateSavedRoom(currentRoomId, { updatedAt: new Date().toISOString() });
+  if (state.currentRole === 'gm') {
+    updateSavedRoom(state.currentRoomId, { updatedAt: new Date().toISOString() });
   }
 });
 socket.on('members', renderMembers);
-socket.on('typing', ({ name, isTyping }) => { typing.textContent = isTyping ? `${name} が入力中...` : ''; });
+socket.on('typing', ({ name, isTyping }) => {
+  if (elements.typing) elements.typing.textContent = isTyping ? `${name} が入力中...` : '';
+});
 socket.on('asset-added', loadAssets);
 socket.on('asset-deleted', loadAssets);
 
+// URL Params Initialization
 if (params.get('room')) {
-  roomIdInput.value = params.get('room');
-  if (isInviteMode) {
-    roomListButton.hidden = true;
-    roomLibrary.hidden = true;
-    systemLabel.hidden = true;
-    const roomTitleLabel = roomTitleInput.closest('label');
+  if (elements.roomIdInput) elements.roomIdInput.value = params.get('room');
+  if (state.isInviteMode) {
+    if (elements.roomListButton) elements.roomListButton.hidden = true;
+    if (elements.roomLibrary) elements.roomLibrary.hidden = true;
+    if (elements.systemLabel) elements.systemLabel.hidden = true;
+    const roomTitleLabel = elements.roomTitleInput?.closest('label');
     if (roomTitleLabel) roomTitleLabel.hidden = true;
-    const nameLabelSpan = nameLabel.querySelector('span');
+    const nameLabelSpan = elements.nameLabel?.querySelector('span');
     if (nameLabelSpan) nameLabelSpan.textContent = '表示名';
-    roomIdInput.readOnly = true;
-    systemIdInput.disabled = true;
-    joinButton.textContent = 'ルームに入る →';
-    entryHint.textContent = 'GMから共有された招待URLです。表示名を入力して入室してください。';
+    if (elements.roomIdInput) elements.roomIdInput.readOnly = true;
+    if (elements.systemIdInput) elements.systemIdInput.disabled = true;
+    if (elements.joinButton) elements.joinButton.textContent = 'ルームに入る →';
+    if (elements.entryHint) elements.entryHint.textContent = 'GMから共有された招待URLです。表示名を入力して入室してください。';
   }
 }
 
-assetFiles.addEventListener('change', uploadAssets);
-assetList.addEventListener('click', async (event) => {
-  const button = event.target.closest('.asset-delete');
-  if (!button) return;
-  const response = await fetch('/api/assets', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-    body: JSON.stringify({ key: decodeURIComponent(button.dataset.key) })
+if (elements.assetFiles) elements.assetFiles.addEventListener('change', uploadAssets);
+if (elements.assetList) {
+  elements.assetList.addEventListener('click', async (event) => {
+    const button = event.target.closest('.asset-delete');
+    if (!button) return;
+    try {
+      const response = await fetch('/api/assets', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
+        body: JSON.stringify({ key: decodeURIComponent(button.dataset.key) })
+      });
+      if (response.ok) loadAssets();
+    } catch (e) {
+      console.error('Failed to delete asset:', e);
+    }
   });
-  if (response.ok) loadAssets();
-});
+}
 
 renderRoomList();
