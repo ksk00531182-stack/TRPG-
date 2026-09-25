@@ -154,10 +154,23 @@ const server = http.createServer((request, response) => {
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
 loadPersistedRooms();
 function broadcastMembers(id) { io.to(`room:${id}`).emit('members', [...getRoom(id).members.values()]); }
+function clearSocketRoom(socket) {
+  const previousRoomId = socket.data.roomId;
+  if (socket.data.sessionToken) sessions.delete(socket.data.sessionToken);
+  if (previousRoomId) {
+    const previousRoom = rooms.get(previousRoomId);
+    previousRoom?.members.delete(socket.id);
+    if (previousRoom) broadcastMembers(previousRoomId);
+  }
+  socket.data.roomId = null;
+  socket.data.member = null;
+  socket.data.sessionToken = null;
+}
 
 function joinRoom(socket, id, member, acknowledge, inviteToken) {
   const room = getRoom(id);
   if (inviteToken !== room.inviteToken) { acknowledge?.({ ok: false, error: '有効なルーム招待URLが必要です。' }); return; }
+  clearSocketRoom(socket);
   socket.join(`room:${id}`);
   socket.data.roomId = id;
   socket.data.member = member;
@@ -250,12 +263,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    const id = socket.data.roomId;
-    if (!id) return;
-    const room = rooms.get(id);
-    if (socket.data.sessionToken) sessions.delete(socket.data.sessionToken);
-    room?.members.delete(socket.id);
-    if (room) broadcastMembers(id);
+    clearSocketRoom(socket);
   });
 });
 
