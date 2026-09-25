@@ -428,6 +428,7 @@ if (elements.roomList) {
     } else if (action === 'enter') {
       socket.emit('resume-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
         if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームに入れませんでした'; return; }
+        if (elements.nameInput) elements.nameInput.value = savedRoom.gmName || '';
         enterRoom(result, 'gm');
       });
     } else if (action === 'duplicate') {
