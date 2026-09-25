@@ -176,7 +176,7 @@ roomList.addEventListener('click', (event) => {
     return;
   }
   if (action === 'enter') {
-    socket.emit('resume-room', { roomId: savedRoom.roomId, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
+    socket.emit('resume-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken, name: savedRoom.gmName }, (result) => {
       if (!result?.ok) { status.textContent = result?.error || 'ルームに入れませんでした'; return; }
       enterRoom(result, 'gm');
     });

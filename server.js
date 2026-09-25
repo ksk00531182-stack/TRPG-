@@ -168,7 +168,7 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   socket.emit('history', room.messages);
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
-  const management = member.role === 'gm' ? { gmToken: room.gmToken } : {};
+  const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
   acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
@@ -186,11 +186,12 @@ io.on('connection', (socket) => {
     joinRoom(socket, id, member, (result) => acknowledge?.({ ...result, inviteToken: room.inviteToken }), room.inviteToken);
   });
 
-  socket.on('resume-room', ({ roomId, gmToken, name } = {}, acknowledge) => {
+  socket.on('resume-room', ({ roomId, gmToken, inviteToken, name } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
-    if (!room || room.gmToken !== gmToken || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
+    const hasValidManagementToken = room && (room.gmToken === gmToken || (!gmToken && room.inviteToken === inviteToken));
+    if (!hasValidManagementToken || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
 
