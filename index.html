@@ -11,6 +11,7 @@
         <input id="roomId" type="hidden">
         <label id="systemLabel">TRPGシステム<select id="systemId" required><option value="coc">クトゥルフ神話TRPG</option><option value="emoklore">エモクロアTRPG</option></select></label>
         <label>ルームタイトル<input id="roomTitle" required maxlength="80" placeholder="例: 月影の港"></label>
+        <label id="playerIdLabel" hidden>プレイヤーID<input id="playerId" maxlength="40" pattern="[^\s]{1,40}" placeholder="例: sato"></label>
         <label id="nameLabel"><span>GM名</span><input id="name" required maxlength="40" placeholder="例: 佐藤"></label>
         <p id="entryHint" class="hint">GMとして新しいルームを作成します。作成後、PC用招待URLを共有してください。</p>
         <button id="joinButton" type="submit">ルームを作成 <span>→</span></button>

@@ -10,6 +10,8 @@ const elements = {
   joinForm: $('#joinForm'),
   roomIdInput: $('#roomId'),
   roomTitleInput: $('#roomTitle'),
+  playerIdInput: $('#playerId'),
+  playerIdLabel: $('#playerIdLabel'),
   systemIdInput: $('#systemId'),
   systemLabel: $('#systemLabel'),
   nameInput: $('#name'),
@@ -40,9 +42,12 @@ const state = {
   sessionToken: '',
   currentRole: 'pc',
   currentRoomId: '',
+  playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
-  roomStorageKey: 'trpg-studio-gm-rooms'
+  roomStorageKey: 'trpg-studio-gm-rooms',
+  playerStorageKey: 'trpg-studio-player-ids',
+  playerNameStorageKey: 'trpg-studio-player-names'
 };
 
 function getSavedRooms() {
@@ -60,6 +65,30 @@ function saveRooms(rooms) {
   } catch (e) {
     console.error('LocalStorageへの保存に失敗しました:', e);
   }
+}
+
+function getSavedPlayerIds() {
+  try {
+    const data = JSON.parse(localStorage.getItem(state.playerStorageKey) || '{}');
+    return data && typeof data === 'object' ? data : {};
+  } catch { return {}; }
+}
+
+function savePlayerId(roomId, playerId) {
+  const playerIds = getSavedPlayerIds();
+  playerIds[roomId] = playerId;
+  try { localStorage.setItem(state.playerStorageKey, JSON.stringify(playerIds)); } catch (e) { console.error('プレイヤーIDの保存に失敗しました:', e); }
+}
+function getSavedPlayerNames() {
+  try {
+    const data = JSON.parse(localStorage.getItem(state.playerNameStorageKey) || '{}');
+    return data && typeof data === 'object' ? data : {};
+  } catch { return {}; }
+}
+function savePlayerName(roomId, name) {
+  const names = getSavedPlayerNames();
+  names[roomId] = name;
+  try { localStorage.setItem(state.playerNameStorageKey, JSON.stringify(names)); } catch (e) { console.error('表示名の保存に失敗しました:', e); }
 }
 
 function saveRoom(roomRecord) {
@@ -331,11 +360,16 @@ async function uploadAssets() {
 
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
+  state.playerId = result.playerId || state.playerId;
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
   state.sessionToken = result.sessionToken;
   state.inviteToken = result.inviteToken || state.inviteToken;
+  if (role === 'pc' && state.playerId) {
+    savePlayerId(result.roomId, state.playerId);
+    savePlayerName(result.roomId, elements.nameInput?.value.trim() || '');
+  }
 
   if (role === 'gm') {
     saveRoom({
@@ -372,7 +406,7 @@ if (elements.joinForm) {
     event.preventDefault();
     const eventName = state.isInviteMode ? 'join-room' : 'create-room';
     const payload = state.isInviteMode
-      ? { roomId: elements.roomIdInput?.value.trim(), inviteToken: state.inviteToken, name: elements.nameInput?.value.trim() }
+      ? { roomId: elements.roomIdInput?.value.trim(), inviteToken: state.inviteToken, playerId: elements.playerIdInput?.value.trim(), name: elements.nameInput?.value.trim() }
       : { systemId: elements.systemIdInput?.value, roomTitle: elements.roomTitleInput?.value.trim(), name: elements.nameInput?.value.trim() };
 
     socket.emit(eventName, payload, (result) => {
@@ -432,13 +466,13 @@ if (elements.roomList) {
         enterRoom(result, 'gm');
       });
     } else if (action === 'duplicate') {
-      socket.emit('duplicate-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
+      socket.emit('duplicate-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken }, (result) => {
         if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームを複製できませんでした'; return; }
         saveRoom({ ...result, gmName: savedRoom.gmName });
         if (elements.status) elements.status.textContent = 'ルームを複製しました';
       });
     } else if (action === 'delete' && window.confirm(`「${savedRoom.roomTitle}」を削除しますか？`)) {
-      socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken }, (result) => {
+      socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken }, (result) => {
         if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームを削除できませんでした'; return; }
         saveRooms(getSavedRooms().filter((r) => r.roomId !== savedRoom.roomId));
         renderRoomList();
@@ -495,6 +529,12 @@ if (params.get('room')) {
     if (elements.roomListButton) elements.roomListButton.hidden = true;
     if (elements.roomLibrary) elements.roomLibrary.hidden = true;
     if (elements.systemLabel) elements.systemLabel.hidden = true;
+    if (elements.playerIdLabel) elements.playerIdLabel.hidden = false;
+    if (elements.playerIdInput) {
+      elements.playerIdInput.required = true;
+      elements.playerIdInput.value = getSavedPlayerIds()[params.get('room')] || '';
+      if (elements.nameInput) elements.nameInput.value = getSavedPlayerNames()[params.get('room')] || '';
+    }
     if (elements.systemIdInput) elements.systemIdInput.removeAttribute('required');
     
     if (elements.roomTitleInput) elements.roomTitleInput.removeAttribute('required');

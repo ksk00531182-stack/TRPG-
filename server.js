@@ -36,6 +36,7 @@ const trpgSystems = Object.freeze({
 
 function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
 function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
+function normalizePlayerId(value) { return typeof value === 'string' && /^[^\s]{1,40}$/.test(value.trim()) ? value.trim() : null; }
 
 function createRoomId() {
   let id;
@@ -48,7 +49,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), assets: new Map(), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), assets: new Map(), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -57,6 +58,7 @@ function persistRooms() {
   const savedRooms = [...rooms.entries()].map(([id, room]) => ({
     id,
     messages: room.messages,
+    players: [...room.players.entries()],
     assets: [...room.assets.entries()],
     inviteToken: room.inviteToken,
     gmToken: room.gmToken,
@@ -80,6 +82,7 @@ function loadPersistedRooms() {
       rooms.set(savedRoom.id, {
         messages: Array.isArray(savedRoom.messages) ? savedRoom.messages : [],
         members: new Map(),
+        players: new Map(savedRoom.players || []),
         assets: new Map(savedRoom.assets || []),
         inviteToken: savedRoom.inviteToken,
         gmToken,
@@ -228,6 +231,10 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   socket.data.roomId = id;
   socket.data.member = member;
   room.members.set(socket.id, member);
+  if (member.role === 'pc') {
+    room.players.set(member.playerId, { playerId: member.playerId, name: member.name });
+    persistRooms();
+  }
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, { roomId: id, role: member.role, socketId: socket.id });
   socket.data.sessionToken = token;
@@ -235,7 +242,7 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
-  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
 io.on('connection', (socket) => {
@@ -261,10 +268,11 @@ io.on('connection', (socket) => {
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
 
-  socket.on('duplicate-room', ({ roomId, gmToken } = {}, acknowledge) => {
+  socket.on('duplicate-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const sourceRoom = id && rooms.get(id);
-    if (!sourceRoom || sourceRoom.gmToken !== gmToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || (!gmToken && sourceRoom.inviteToken === inviteToken));
+    if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     const duplicateId = createRoomId();
     const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80));
     duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
@@ -274,10 +282,11 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, roomId: duplicateId, roomTitle: duplicateRoom.title, systemId: system.id, systemName: system.name, inviteToken: duplicateRoom.inviteToken, gmToken: duplicateRoom.gmToken, createdAt: duplicateRoom.createdAt, updatedAt: duplicateRoom.updatedAt });
   });
 
-  socket.on('delete-room', ({ roomId, gmToken } = {}, acknowledge) => {
+  socket.on('delete-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
-    if (!room || room.gmToken !== gmToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    const hasValidManagementToken = room && (room.gmToken === gmToken || (!gmToken && room.inviteToken === inviteToken));
+    if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     rooms.delete(id);
     for (const [token, session] of sessions) if (session.roomId === id) sessions.delete(token);
     io.to(`room:${id}`).emit('room-deleted');
@@ -285,11 +294,13 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true });
   });
 
-  socket.on('join-room', ({ roomId, inviteToken, name } = {}, acknowledge) => {
+  socket.on('join-room', ({ roomId, inviteToken, playerId: rawPlayerId, name } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
-    const member = { id: socket.id, name: cleanText(name, 40), role: 'pc' };
-    if (!id || !member.name || typeof inviteToken !== 'string') { acknowledge?.({ ok: false, error: '有効な招待URLと表示名が必要です。' }); return; }
-    if (!rooms.has(id)) { acknowledge?.({ ok: false, error: 'ルームが存在しないか、GMがまだ作成していません。' }); return; }
+    const playerId = normalizePlayerId(rawPlayerId);
+    const room = id && rooms.get(id);
+    const member = { id: socket.id, playerId, name: cleanText(name, 40) || room?.players.get(playerId)?.name || '', role: 'pc' };
+    if (!id || !playerId || !member.name || typeof inviteToken !== 'string') { acknowledge?.({ ok: false, error: '有効な招待URL、プレイヤーID、表示名が必要です。' }); return; }
+    if (!room) { acknowledge?.({ ok: false, error: 'ルームが存在しないか、GMがまだ作成していません。' }); return; }
     joinRoom(socket, id, member, acknowledge, inviteToken);
   });
 
