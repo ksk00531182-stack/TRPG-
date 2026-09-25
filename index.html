@@ -8,16 +8,23 @@
       <h1>同じ卓に、<br><em>同じ声</em>を。</h1>
       <p class="intro">GMとPCが、ルーム内のメッセージでつながるシンプルなセッション通信室。</p>
       <form id="joinForm" class="join-form">
-        <label>ルームID<input id="roomId" required pattern="[A-Za-z0-9_-]{1,64}" placeholder="例: moonlit-01"></label>
-        <label>表示名<input id="name" required maxlength="40" placeholder="例: 佐藤 / GM"></label>
-        <label>参加形態<select id="role"><option value="gm">GM</option><option value="pc">PC</option></select></label>
-        <p id="roleHint" class="hint">ルームを作成してPCへURLを共有します</p>
-        <button type="submit">ルームに入る <span>→</span></button>
+        <input id="roomId" type="hidden">
+        <label id="systemLabel">TRPGシステム<select id="systemId" required><option value="coc">クトゥルフ神話TRPG</option><option value="emoklore">エモクロアTRPG</option></select></label>
+        <label>ルームタイトル<input id="roomTitle" required maxlength="80" placeholder="例: 月影の港"></label>
+        <label id="nameLabel"><span>GM名</span><input id="name" required maxlength="40" placeholder="例: 佐藤"></label>
+        <p id="entryHint" class="hint">GMとして新しいルームを作成します。作成後、PC用招待URLを共有してください。</p>
+        <button id="joinButton" type="submit">ルームを作成 <span>→</span></button>
+        <button id="roomListButton" class="secondary" type="button">ルーム一覧</button>
       </form>
+      <section class="room-library" id="roomLibrary" hidden>
+        <div class="room-library-panel"><div class="library-heading"><div><p class="eyebrow">YOUR ROOMS</p><h2>ルーム一覧</h2></div></div>
+          <div class="room-list" id="roomList"><p class="empty-rooms">ルームがまだ作成されていません。</p></div>
+        </div>
+      </section>
       <p class="connection"><span class="status-dot"></span><span id="status">サーバーへ接続しています</span></p>
     </section>
     <section class="room" id="room" hidden>
-      <header class="room-header"><div><p class="eyebrow">LIVE SESSION</p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
+      <header class="room-header"><div><p class="eyebrow">LIVE SESSION</p><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
       <section class="assets panel">
         <div class="assets-heading"><div><p class="eyebrow">SCENARIO ASSETS</p><h3>素材ストレージ</h3></div><span id="assetStatus"></span></div>
         <div class="asset-upload gm-only" id="assetUpload" hidden><select id="assetCategory" aria-label="素材カテゴリー"><option value="characters">キャラクター</option><option value="materials">資料</option><option value="icons">アイコン</option><option value="backgrounds">背景</option><option value="bgm">BGM</option></select><label class="file-picker">ファイルを選択<input id="assetFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/ogg,audio/wav" multiple></label></div>
