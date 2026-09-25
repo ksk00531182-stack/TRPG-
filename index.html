@@ -36,6 +36,7 @@
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
             <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
             <button id="membersTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="membersPanel">参加者</button>
+            <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
           </div>
           <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
             <div class="chat-heading"><span id="typing"></span></div>
@@ -44,6 +45,9 @@
           </div>
           <div id="membersPanel" class="tab-panel" role="tabpanel" aria-labelledby="membersTab" hidden>
             <ul id="memberList"></ul>
+          </div>
+          <div id="memoPanel" class="tab-panel" role="tabpanel" aria-labelledby="memoTab" hidden>
+            <textarea id="memoInput" class="memo-input" placeholder="自由にメモを入力..."></textarea>
           </div>
         </section>
       </div>

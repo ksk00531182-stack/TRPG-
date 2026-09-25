@@ -23,8 +23,11 @@ const elements = {
   roomList: $('#roomList'),
   chatTab: $('#chatTab'),
   membersTab: $('#membersTab'),
+  memoTab: $('#memoTab'),
   chatPanel: $('#chatPanel'),
   membersPanel: $('#membersPanel'),
+  memoPanel: $('#memoPanel'),
+  memoInput: $('#memoInput'),
   roomLabel: $('#roomLabel'),
   roomSystem: $('#roomSystem'),
   memberList: $('#memberList'),
@@ -52,7 +55,8 @@ const state = {
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
   roomStorageKey: 'trpg-studio-gm-rooms',
   playerStorageKey: 'trpg-studio-player-ids',
-  playerNameStorageKey: 'trpg-studio-player-names'
+  playerNameStorageKey: 'trpg-studio-player-names',
+  memoStorageKey: 'trpg-studio-room-memos'
 };
 
 function getSavedRooms() {
@@ -98,6 +102,17 @@ function savePlayerName(roomId, name) {
   const names = getSavedPlayerNames();
   names[roomId] = name;
   try { localStorage.setItem(state.playerNameStorageKey, JSON.stringify(names)); } catch (e) { console.error('表示名の保存に失敗しました:', e); }
+}
+function getSavedMemos() {
+  try {
+    const data = JSON.parse(localStorage.getItem(state.memoStorageKey) || '{}');
+    return data && typeof data === 'object' ? data : {};
+  } catch { return {}; }
+}
+function saveMemo(roomId, memo) {
+  const memos = getSavedMemos();
+  memos[roomId] = memo;
+  try { localStorage.setItem(state.memoStorageKey, JSON.stringify(memos)); } catch (e) { console.error('メモの保存に失敗しました:', e); }
 }
 
 function saveRoom(roomRecord) {
@@ -263,6 +278,7 @@ function renderMembers(members) {
     allOption.textContent = '全体チャット';
     elements.messageTarget.appendChild(allOption);
     members.forEach((member) => {
+      if (member.role === 'gm' && state.currentRole === 'gm') return;
       if (member.role === 'pc' && member.playerId === state.playerId) return;
       const option = document.createElement('option');
       option.value = member.playerId || member.id;
@@ -390,6 +406,7 @@ async function uploadAssets() {
 
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
+  if (elements.memoInput) elements.memoInput.value = getSavedMemos()[result.roomId] || '';
   state.playerId = result.playerId || state.playerId;
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
@@ -480,15 +497,20 @@ if (elements.roomLibrary) {
 
 function switchSessionTab(tab) {
   const showChat = tab === 'chat';
+  const showMembers = tab === 'members';
   elements.chatPanel.hidden = !showChat;
-  elements.membersPanel.hidden = showChat;
+  elements.membersPanel.hidden = !showMembers;
+  elements.memoPanel.hidden = tab !== 'memo';
   elements.chatTab.classList.toggle('is-active', showChat);
-  elements.membersTab.classList.toggle('is-active', !showChat);
+  elements.membersTab.classList.toggle('is-active', showMembers);
+  elements.memoTab.classList.toggle('is-active', tab === 'memo');
   elements.chatTab.setAttribute('aria-selected', String(showChat));
-  elements.membersTab.setAttribute('aria-selected', String(!showChat));
+  elements.membersTab.setAttribute('aria-selected', String(showMembers));
+  elements.memoTab.setAttribute('aria-selected', String(tab === 'memo'));
 }
 elements.chatTab?.addEventListener('click', () => switchSessionTab('chat'));
 elements.membersTab?.addEventListener('click', () => switchSessionTab('members'));
+elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
 
 if (elements.roomList) {
   elements.roomList.addEventListener('click', (event) => {
@@ -555,6 +577,10 @@ if (elements.messageInput) {
     clearTimeout(state.typingTimer);
     state.typingTimer = setTimeout(() => socket.emit('typing', false), 900);
   });
+}
+
+if (elements.memoInput) {
+  elements.memoInput.addEventListener('input', () => saveMemo(state.currentRoomId, elements.memoInput.value));
 }
 
 // Socket Events

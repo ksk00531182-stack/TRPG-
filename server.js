@@ -321,7 +321,7 @@ io.on('connection', (socket) => {
     const targetMember = targetValue
       ? [...room.members.values()].find((member) => member.id === targetValue || member.playerId === targetValue)
       : null;
-    if (targetValue && !targetMember) return;
+    if (targetValue && (!targetMember || targetMember.id === socket.id)) return;
     const message = {
       id: `${Date.now()}-${socket.id}`,
       text,
