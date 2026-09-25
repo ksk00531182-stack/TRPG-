@@ -263,7 +263,7 @@ io.on('connection', (socket) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
-    const hasValidManagementToken = room && (room.gmToken === gmToken || (!gmToken && room.inviteToken === inviteToken));
+    const hasValidManagementToken = room && (room.gmToken === gmToken || room.inviteToken === inviteToken);
     if (!hasValidManagementToken || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
@@ -271,7 +271,7 @@ io.on('connection', (socket) => {
   socket.on('duplicate-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const sourceRoom = id && rooms.get(id);
-    const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || (!gmToken && sourceRoom.inviteToken === inviteToken));
+    const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || sourceRoom.inviteToken === inviteToken);
     if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     const duplicateId = createRoomId();
     const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80));
@@ -285,7 +285,7 @@ io.on('connection', (socket) => {
   socket.on('delete-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
-    const hasValidManagementToken = room && (room.gmToken === gmToken || (!gmToken && room.inviteToken === inviteToken));
+    const hasValidManagementToken = room && (room.gmToken === gmToken || room.inviteToken === inviteToken);
     if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     rooms.delete(id);
     for (const [token, session] of sessions) if (session.roomId === id) sessions.delete(token);
