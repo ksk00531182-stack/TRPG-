@@ -66,6 +66,10 @@ function saveRooms(rooms) {
     console.error('LocalStorageへの保存に失敗しました:', e);
   }
 }
+function removeSavedRoom(roomId) {
+  saveRooms(getSavedRooms().filter((room) => room?.roomId !== roomId));
+  renderRoomList();
+}
 
 function getSavedPlayerIds() {
   try {
@@ -473,9 +477,16 @@ if (elements.roomList) {
       });
     } else if (action === 'delete' && window.confirm(`「${savedRoom.roomTitle}」を削除しますか？`)) {
       socket.emit('delete-room', { roomId: savedRoom.roomId, gmToken: savedRoom.gmToken, inviteToken: savedRoom.inviteToken }, (result) => {
-        if (!result?.ok) { if (elements.status) elements.status.textContent = result?.error || 'ルームを削除できませんでした'; return; }
-        saveRooms(getSavedRooms().filter((r) => r.roomId !== savedRoom.roomId));
-        renderRoomList();
+        if (!result?.ok) {
+          if (result?.error === 'ルーム情報が無効です。') {
+            removeSavedRoom(savedRoom.roomId);
+            if (elements.status) elements.status.textContent = '存在しないルーム履歴を一覧から削除しました';
+          } else if (elements.status) {
+            elements.status.textContent = result?.error || 'ルームを削除できませんでした';
+          }
+          return;
+        }
+        removeSavedRoom(savedRoom.roomId);
         if (elements.status) elements.status.textContent = 'ルームを削除しました';
       });
     }
