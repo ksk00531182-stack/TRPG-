@@ -32,7 +32,7 @@ const elements = {
   assetUpload: $('#assetUpload'),
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
-  copyLink: $('#copyLink') // null safeチェック対応
+  copyLink: $('#copyLink')
 };
 
 const state = {
@@ -44,12 +44,6 @@ const state = {
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
   roomStorageKey: 'trpg-studio-gm-rooms'
 };
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }[char] || char));
-}
 
 function getSavedRooms() {
   try {
@@ -64,7 +58,7 @@ function saveRooms(rooms) {
   try {
     localStorage.setItem(state.roomStorageKey, JSON.stringify(rooms));
   } catch (e) {
-    console.error('Failed to save rooms to LocalStorage:', e);
+    console.error('LocalStorageへの保存に失敗しました:', e);
   }
 }
 
@@ -78,12 +72,17 @@ function saveRoom(roomRecord) {
 
 function formatDate(value) {
   if (!value) return '-';
-  return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 function formatRelativeDate(value) {
   if (!value) return '-';
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return '-';
+  const days = Math.floor((Date.now() - timestamp) / 86400000);
   if (days <= 0) return '今日';
   if (days === 1) return '昨日';
   if (days < 7) return `${days}日前`;
@@ -95,28 +94,69 @@ function formatRelativeDate(value) {
 function renderRoomList() {
   if (!elements.roomList) return;
   const rooms = getSavedRooms();
+  elements.roomList.innerHTML = '';
+  
   if (!rooms.length) {
-    elements.roomList.innerHTML = '<p class="empty-rooms">ルームがまだ作成されていません。</p>';
+    const p = document.createElement('p');
+    p.className = 'empty-rooms';
+    p.textContent = 'ルームがまだ作成されていません。';
+    elements.roomList.appendChild(p);
     return;
   }
-  elements.roomList.innerHTML = rooms.map((savedRoom) => `
-    <article class="room-card" data-room-id="${escapeHtml(savedRoom.roomId)}">
-      <div class="room-card-heading">
-        <h3>■ ${escapeHtml(savedRoom.roomTitle)}</h3>
-        <span>${escapeHtml(savedRoom.systemName)}</span>
-      </div>
-      <p class="room-meta">作成日: ${formatDate(savedRoom.createdAt)} <b>|</b> 最終更新: ${formatRelativeDate(savedRoom.updatedAt)}</p>
-      <div class="room-actions">
-        <button type="button" data-action="enter">部屋に入る</button>
-        <button type="button" data-action="copy">招待URLコピー</button>
-        <button type="button" data-action="duplicate">複製</button>
-        <button type="button" data-action="delete" class="danger">削除</button>
-      </div>
-    </article>
-  `).join('');
+
+  rooms.forEach((savedRoom) => {
+    const article = document.createElement('article');
+    article.className = 'room-card';
+    article.dataset.roomId = savedRoom.roomId;
+
+    const heading = document.createElement('div');
+    heading.className = 'room-card-heading';
+    
+    const h3 = document.createElement('h3');
+    h3.textContent = `■ ${savedRoom.roomTitle || ''}`;
+    
+    const span = document.createElement('span');
+    span.textContent = savedRoom.systemName || '';
+    
+    heading.append(h3, span);
+
+    const meta = document.createElement('p');
+    meta.className = 'room-meta';
+    meta.innerHTML = `作成日: ${formatDate(savedRoom.createdAt)} <b>|</b> 最終更新: ${formatRelativeDate(savedRoom.updatedAt)}`;
+
+    const actions = document.createElement('div');
+    actions.className = 'room-actions';
+
+    const enterBtn = document.createElement('button');
+    enterBtn.type = 'button';
+    enterBtn.dataset.action = 'enter';
+    enterBtn.textContent = '部屋に入る';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.dataset.action = 'copy';
+    copyBtn.textContent = '招待URLコピー';
+
+    const dupBtn = document.createElement('button');
+    dupBtn.type = 'button';
+    dupBtn.dataset.action = 'duplicate';
+    dupBtn.textContent = '複製';
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.dataset.action = 'delete';
+    delBtn.className = 'danger';
+    delBtn.textContent = '削除';
+
+    actions.append(enterBtn, copyBtn, dupBtn, delBtn);
+    article.append(heading, meta, actions);
+    elements.roomList.appendChild(article);
+  });
 }
 
-function findSavedRoom(roomId) { return getSavedRooms().find((r) => r && r.roomId === roomId); }
+function findSavedRoom(roomId) {
+  return getSavedRooms().find((r) => r && r.roomId === roomId);
+}
 
 function updateSavedRoom(roomId, changes) {
   const rooms = getSavedRooms().map((r) => (r && r.roomId === roomId) ? { ...r, ...changes } : r);
@@ -132,52 +172,101 @@ function addMessage(message) {
   if (!elements.messageList || !message) return;
   const item = document.createElement('article');
   item.className = `message ${message.role === 'gm' ? 'is-gm' : ''}`;
-  item.innerHTML = `
-    <div class="message-meta">
-      <strong>${escapeHtml(message.name)}</strong>
-      <time>${new Date(message.time || Date.now()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</time>
-    </div>
-    <p>${escapeHtml(message.text).replace(/\n/g, '<br>')}</p>
-  `;
+  
+  const meta = document.createElement('div');
+  meta.className = 'message-meta';
+  
+  const nameStrong = document.createElement('strong');
+  nameStrong.textContent = message.name || '';
+  
+  const timeEl = document.createElement('time');
+  timeEl.textContent = new Date(message.time || Date.now()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  
+  meta.append(nameStrong, timeEl);
+  
+  const textP = document.createElement('p');
+  textP.style.whiteSpace = 'pre-wrap';
+  textP.textContent = message.text || '';
+  
+  item.append(meta, textP);
   elements.messageList.append(item);
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
 function renderMembers(members) {
   if (!elements.memberList || !Array.isArray(members)) return;
-  elements.memberList.innerHTML = members.map((member) => `
-    <li>
-      <span class="presence"></span>
-      <span>${escapeHtml(member.name)}</span>
-      <small>${member.role === 'gm' ? 'GM' : 'PC'}</small>
-    </li>
-  `).join('');
+  elements.memberList.innerHTML = '';
+  members.forEach((member) => {
+    const li = document.createElement('li');
+    
+    const presence = document.createElement('span');
+    presence.className = 'presence';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = member.name || '';
+    
+    const roleSmall = document.createElement('small');
+    roleSmall.textContent = member.role === 'gm' ? 'GM' : 'PC';
+    
+    li.append(presence, nameSpan, roleSmall);
+    elements.memberList.appendChild(li);
+  });
 }
 
 function renderAssets(assets) {
   if (!elements.assetList) return;
+  elements.assetList.innerHTML = '';
+  
   if (!assets || !assets.length) {
-    elements.assetList.innerHTML = '<p class="empty-assets">このルームには素材がありません。</p>';
+    const p = document.createElement('p');
+    p.className = 'empty-assets';
+    p.textContent = 'このルームには素材がありません。';
+    elements.assetList.appendChild(p);
     return;
   }
-  elements.assetList.innerHTML = assets.map((asset) => {
-    const preview = asset.type?.startsWith('image/')
-      ? `<img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy">`
-      : '<span class="asset-audio">♫</span>';
-    const remove = state.currentRole === 'gm'
-      ? `<button class="asset-delete" type="button" data-key="${encodeURIComponent(asset.key)}">削除</button>`
-      : '';
-    return `
-      <article class="asset-card">
-        <a href="${escapeHtml(asset.url)}" target="_blank" rel="noreferrer">${preview}</a>
-        <div>
-          <strong>${escapeHtml(asset.name)}</strong>
-          <small>${escapeHtml(asset.category)}</small>
-        </div>
-        ${remove}
-      </article>
-    `;
-  }).join('');
+
+  assets.forEach((asset) => {
+    const article = document.createElement('article');
+    article.className = 'asset-card';
+
+    const link = document.createElement('a');
+    link.href = asset.url || '#';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+
+    if (asset.type?.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = asset.url;
+      img.alt = asset.name || '';
+      img.loading = 'lazy';
+      link.appendChild(img);
+    } else {
+      const audioSpan = document.createElement('span');
+      audioSpan.className = 'asset-audio';
+      audioSpan.textContent = '♫';
+      link.appendChild(audioSpan);
+    }
+
+    const infoDiv = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = asset.name || '';
+    const small = document.createElement('small');
+    small.textContent = asset.category || '';
+    infoDiv.append(strong, small);
+
+    article.append(link, infoDiv);
+
+    if (state.currentRole === 'gm') {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'asset-delete';
+      deleteBtn.type = 'button';
+      deleteBtn.dataset.key = asset.key;
+      deleteBtn.textContent = '削除';
+      article.appendChild(deleteBtn);
+    }
+
+    elements.assetList.appendChild(article);
+  });
 }
 
 async function loadAssets() {
@@ -210,7 +299,7 @@ async function uploadAssets() {
       const permission = await fetch('/api/assets/upload-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
-        body: JSON.stringify({ category: elements.assetCategory.value, name: file.name, type: file.type, size: file.size })
+        body: JSON.stringify({ category: elements.assetCategory?.value || 'materials', name: file.name, type: file.type, size: file.size })
       });
       if (!permission.ok) throw new Error(`アップロード許可を取得できません (${permission.status})`);
 
@@ -277,14 +366,14 @@ function enterRoom(result, role) {
   loadAssets();
 }
 
-// Event Listeners Initialization
+// Global Event Listeners
 if (elements.joinForm) {
   elements.joinForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const eventName = state.isInviteMode ? 'join-room' : 'create-room';
     const payload = state.isInviteMode
-      ? { roomId: elements.roomIdInput.value.trim(), inviteToken: state.inviteToken, name: elements.nameInput.value.trim() }
-      : { systemId: elements.systemIdInput.value, roomTitle: elements.roomTitleInput.value.trim(), name: elements.nameInput.value.trim() };
+      ? { roomId: elements.roomIdInput?.value.trim(), inviteToken: state.inviteToken, name: elements.nameInput?.value.trim() }
+      : { systemId: elements.systemIdInput?.value, roomTitle: elements.roomTitleInput?.value.trim(), name: elements.nameInput?.value.trim() };
 
     socket.emit(eventName, payload, (result) => {
       if (!result?.ok) {
@@ -361,6 +450,7 @@ if (elements.roomList) {
 if (elements.messageForm) {
   elements.messageForm.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (!elements.messageInput) return;
     const text = elements.messageInput.value.trim();
     if (!text) return;
     socket.emit('send-message', text);
@@ -404,10 +494,15 @@ if (params.get('room')) {
     if (elements.roomListButton) elements.roomListButton.hidden = true;
     if (elements.roomLibrary) elements.roomLibrary.hidden = true;
     if (elements.systemLabel) elements.systemLabel.hidden = true;
+    if (elements.systemIdInput) elements.systemIdInput.removeAttribute('required');
+    
+    if (elements.roomTitleInput) elements.roomTitleInput.removeAttribute('required');
     const roomTitleLabel = elements.roomTitleInput?.closest('label');
     if (roomTitleLabel) roomTitleLabel.hidden = true;
+    
     const nameLabelSpan = elements.nameLabel?.querySelector('span');
     if (nameLabelSpan) nameLabelSpan.textContent = '表示名';
+    
     if (elements.roomIdInput) elements.roomIdInput.readOnly = true;
     if (elements.systemIdInput) elements.systemIdInput.disabled = true;
     if (elements.joinButton) elements.joinButton.textContent = 'ルームに入る →';
@@ -424,7 +519,7 @@ if (elements.assetList) {
       const response = await fetch('/api/assets', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
-        body: JSON.stringify({ key: decodeURIComponent(button.dataset.key) })
+        body: JSON.stringify({ key: button.dataset.key })
       });
       if (response.ok) loadAssets();
     } catch (e) {

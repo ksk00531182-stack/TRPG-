@@ -132,7 +132,13 @@ async function handleAssetApi(request, response, requestPath) {
     const result = await r2.send(new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET_NAME, Prefix: `rooms/${session.roomId}/` }));
     const assets = await Promise.all((result.Contents || []).map(async (object) => {
       const asset = room.assets.get(object.Key) || { key: object.Key, name: path.basename(object.Key), category: object.Key.split('/')[2] || 'materials', size: object.Size, type: '' };
-      return { ...asset, size: object.Size, updatedAt: object.LastModified, url: await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: object.Key }), { expiresIn: 3600 }) };
+      let url = '';
+      try {
+        url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: object.Key }), { expiresIn: 3600 });
+      } catch (err) {
+        console.error('Failed to generate presigned URL:', err);
+      }
+      return { ...asset, size: object.Size, updatedAt: object.LastModified, url };
     }));
     sendJson(response, 200, { assets });
     return true;
@@ -178,7 +184,7 @@ const server = http.createServer((request, response) => {
     if (handled) return;
     const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\//, '');
     const filePath = path.resolve(root, relativePath);
-    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) { response.writeHead(404); response.end('Not Found'); return; }
+    if (!filePath.startsWith(root)) { response.writeHead(404); response.end('Not Found'); return; }
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not Found'); return; }
     response.writeHead(200, { 'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(filePath).pipe(response);
@@ -192,7 +198,16 @@ function broadcastMembers(id) { io.to(`room:${id}`).emit('members', [...getRoom(
 
 function clearSocketRoom(socket) {
   const previousRoomId = socket.data.roomId;
-  if (socket.data.sessionToken) sessions.delete(socket.data.sessionToken);
+  if (socket.data.sessionToken) {
+    sessions.delete(socket.data.sessionToken);
+  }
+  
+  for (const [token, session] of sessions.entries()) {
+    if (session.socketId === socket.id) {
+      sessions.delete(token);
+    }
+  }
+
   if (previousRoomId) {
     const previousRoom = rooms.get(previousRoomId);
     if (previousRoom) {
