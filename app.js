@@ -50,6 +50,11 @@ const elements = {
   assetUpload: $('#assetUpload'),
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
+  boardAssets: $('#boardAssets'),
+  layerBox: $('#layerBox'),
+  layerList: $('#layerList'),
+  layerGroupForm: $('#layerGroupForm'),
+  layerGroupName: $('#layerGroupName'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
   playAreaTabs: document.querySelectorAll('.play-area-tab'),
   copyLink: $('#copyLink')
@@ -62,6 +67,8 @@ const state = {
   currentRoomId: '',
   currentMembers: [],
   assets: [],
+  boardAssets: [],
+  selectedLayerIds: new Set(),
   playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
@@ -338,22 +345,28 @@ function renderAssets(assets) {
     const article = document.createElement('article');
     article.className = 'asset-card';
 
-    const link = document.createElement('a');
-    link.href = asset.url || '#';
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-
     if (asset.type?.startsWith('image/')) {
+      const placeButton = document.createElement('button');
+      placeButton.type = 'button';
+      placeButton.className = 'asset-place';
+      placeButton.dataset.assetKey = asset.key;
+      placeButton.title = 'プレイエリアに配置';
       const img = document.createElement('img');
       img.src = asset.url;
       img.alt = asset.name || '';
       img.loading = 'lazy';
-      link.appendChild(img);
+      placeButton.appendChild(img);
+      article.appendChild(placeButton);
     } else {
+      const link = document.createElement('a');
+      link.href = asset.url || '#';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
       const audioSpan = document.createElement('span');
       audioSpan.className = 'asset-audio';
       audioSpan.textContent = '♫';
       link.appendChild(audioSpan);
+      article.appendChild(link);
     }
 
     const infoDiv = document.createElement('div');
@@ -363,7 +376,7 @@ function renderAssets(assets) {
     small.textContent = asset.category || '';
     infoDiv.append(strong, small);
 
-    article.append(link, infoDiv);
+    article.appendChild(infoDiv);
 
     if (state.currentRole === 'gm') {
       const deleteBtn = document.createElement('button');
@@ -375,6 +388,164 @@ function renderAssets(assets) {
     }
 
     elements.assetList.appendChild(article);
+  });
+  renderBoardAssets();
+}
+
+function renderBoardAssets(boardAssets = state.boardAssets) {
+  if (!elements.boardAssets || !elements.layerList) return;
+  state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
+  state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id)));
+  elements.boardAssets.innerHTML = '';
+  elements.layerList.innerHTML = '';
+  if (elements.layerBox) elements.layerBox.hidden = state.boardAssets.length === 0;
+  if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+
+  state.boardAssets.forEach((placedAsset, index) => {
+    const asset = state.assets.find((item) => item.key === placedAsset.key);
+    if (!asset?.url || placedAsset.visible === false) return;
+    const image = document.createElement('img');
+    image.className = `board-asset-image${placedAsset.locked ? ' is-locked' : ''}`;
+    image.src = asset.url;
+    image.alt = placedAsset.name || asset.name || '';
+    image.title = `${image.alt}（${placedAsset.placedBy || ''}）`;
+    image.draggable = false;
+    image.style.zIndex = String(index + 1);
+    image.style.left = `${Math.max(0.05, Math.min(0.95, Number(placedAsset.x) || 0.5)) * 100}%`;
+    image.style.top = `${Math.max(0.05, Math.min(0.95, Number(placedAsset.y) || 0.5)) * 100}%`;
+    if (!placedAsset.locked) {
+      image.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        image.setPointerCapture(event.pointerId);
+        const bounds = elements.boardAssets.getBoundingClientRect();
+        const updatePosition = (pointerEvent) => {
+          image.style.left = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientX - bounds.left) / bounds.width)) * 100}%`;
+          image.style.top = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientY - bounds.top) / bounds.height)) * 100}%`;
+        };
+        const finishMove = (pointerEvent) => {
+          updatePosition(pointerEvent);
+          image.removeEventListener('pointermove', updatePosition);
+          image.removeEventListener('pointerup', finishMove);
+          const x = (pointerEvent.clientX - bounds.left) / bounds.width;
+          const y = (pointerEvent.clientY - bounds.top) / bounds.height;
+          socket.emit('update-board-asset', { assetId: placedAsset.id, action: 'move', x, y });
+        };
+        image.addEventListener('pointermove', updatePosition);
+        image.addEventListener('pointerup', finishMove);
+      });
+    }
+    elements.boardAssets.appendChild(image);
+  });
+
+  const displayOrder = [...state.boardAssets].reverse();
+  let activeGroupId = null;
+  displayOrder.forEach((placedAsset, reversedIndex) => {
+    const layerIndex = state.boardAssets.length - reversedIndex - 1;
+    const asset = state.assets.find((item) => item.key === placedAsset.key);
+    const groupIndexes = placedAsset.groupId
+      ? state.boardAssets.map((item, index) => item.groupId === placedAsset.groupId ? index : -1).filter((index) => index >= 0)
+      : [layerIndex];
+    const atFront = Math.max(...groupIndexes) === state.boardAssets.length - 1;
+    const atBack = Math.min(...groupIndexes) === 0;
+    if (placedAsset.groupId !== activeGroupId) {
+      activeGroupId = placedAsset.groupId || null;
+      if (activeGroupId) {
+        const groupAssets = state.boardAssets.filter((asset) => asset.groupId === activeGroupId);
+        const groupRow = document.createElement('li');
+        groupRow.className = 'layer-group-row';
+        const groupName = document.createElement('strong');
+        groupName.className = 'layer-group-name';
+        groupName.textContent = placedAsset.groupName || 'グループ';
+        groupRow.appendChild(groupName);
+        if (state.currentRole === 'gm') {
+          const controls = document.createElement('div');
+          controls.className = 'layer-controls';
+          [
+            ['toggle-group-visibility', groupAssets.every((asset) => asset.visible !== false) ? '👁' : '○', 'グループ表示切り替え', { visible: groupAssets.some((asset) => asset.visible === false) }],
+            ['toggle-group-lock', groupAssets.every((asset) => asset.locked) ? '🔒' : '🔓', 'グループロック切り替え', { locked: !groupAssets.every((asset) => asset.locked) }],
+            ['ungroup', '解除', 'グループ解除', {}]
+          ].forEach(([action, label, title, values]) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `${action.includes('lock') ? 'layer-lock' : ''}${action.includes('lock') && groupAssets.every((asset) => asset.locked) ? ' is-locked' : ''}`;
+            button.dataset.layerAction = action;
+            button.dataset.groupId = activeGroupId;
+            Object.entries(values).forEach(([key, value]) => { button.dataset[key] = String(value); });
+            button.textContent = label;
+            button.title = title;
+            button.setAttribute('aria-label', title);
+            controls.appendChild(button);
+          });
+          groupRow.appendChild(controls);
+        }
+        elements.layerList.appendChild(groupRow);
+      }
+    }
+    const row = document.createElement('li');
+    row.className = `layer-row${placedAsset.locked ? ' is-locked' : ''}`;
+    row.dataset.assetId = placedAsset.id;
+    row.draggable = state.currentRole === 'gm' && !placedAsset.locked && !placedAsset.groupId;
+    if (state.currentRole === 'gm') {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'layer-select';
+      checkbox.checked = state.selectedLayerIds.has(placedAsset.id);
+      checkbox.dataset.assetId = placedAsset.id;
+      checkbox.setAttribute('aria-label', `${placedAsset.name || '画像'}を選択`);
+      row.appendChild(checkbox);
+    }
+    const thumbnail = document.createElement('img');
+    thumbnail.className = 'layer-thumbnail';
+    thumbnail.src = asset?.url || '';
+    thumbnail.alt = '';
+    thumbnail.draggable = false;
+    row.appendChild(thumbnail);
+    const name = document.createElement('span');
+    name.className = 'layer-name';
+    name.textContent = placedAsset.name || '画像';
+    row.appendChild(name);
+    if (state.currentRole === 'gm') {
+      const controls = document.createElement('div');
+      controls.className = 'layer-controls';
+      [['forward', '↑', atFront, '前面へ'], ['backward', '↓', atBack, '背面へ']].forEach(([action, label, disabled, title]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.layerAction = action;
+        button.dataset.assetId = placedAsset.id;
+        button.textContent = label;
+        button.title = title;
+        button.setAttribute('aria-label', title);
+        button.disabled = disabled;
+        controls.appendChild(button);
+      });
+      const lockButton = document.createElement('button');
+      lockButton.type = 'button';
+      lockButton.className = `layer-lock${placedAsset.locked ? ' is-locked' : ''}`;
+      lockButton.dataset.layerAction = 'toggle-lock';
+      lockButton.dataset.assetId = placedAsset.id;
+      lockButton.textContent = placedAsset.locked ? '🔒' : '🔓';
+      lockButton.title = placedAsset.locked ? 'ロック解除' : 'ロック';
+      lockButton.setAttribute('aria-label', lockButton.title);
+      controls.appendChild(lockButton);
+      const visibilityButton = document.createElement('button');
+      visibilityButton.type = 'button';
+      visibilityButton.className = `layer-visibility${placedAsset.visible === false ? ' is-hidden' : ''}`;
+      visibilityButton.dataset.layerAction = 'toggle-visibility';
+      visibilityButton.dataset.assetId = placedAsset.id;
+      visibilityButton.dataset.visible = String(placedAsset.visible === false);
+      visibilityButton.textContent = placedAsset.visible === false ? '○' : '👁';
+      visibilityButton.title = placedAsset.visible === false ? '表示する' : '非表示にする';
+      visibilityButton.setAttribute('aria-label', visibilityButton.title);
+      controls.appendChild(visibilityButton);
+      row.appendChild(controls);
+    } else {
+      const status = document.createElement('small');
+      status.className = `layer-status-icons${placedAsset.locked ? ' is-locked' : ''}`;
+      status.textContent = `${placedAsset.locked ? '🔒' : ''}${placedAsset.visible === false ? '○' : '👁'}`;
+      row.appendChild(status);
+    }
+    elements.layerList.appendChild(row);
   });
 }
 
@@ -440,11 +611,14 @@ async function uploadAssets() {
 
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
+  state.selectedLayerIds.clear();
+  state.boardAssets = Array.isArray(result.boardAssets) ? result.boardAssets : [];
   if (elements.memoInput) elements.memoInput.value = getSavedMemos()[result.roomId] || '';
   state.playerId = result.playerId || state.playerId;
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  renderBoardAssets();
   state.sessionToken = result.sessionToken;
   state.inviteToken = result.inviteToken || state.inviteToken;
   if (role === 'pc' && state.playerId) {
@@ -688,6 +862,7 @@ socket.on('typing', ({ name, isTyping }) => {
 });
 socket.on('asset-added', loadAssets);
 socket.on('asset-deleted', loadAssets);
+socket.on('board-assets', renderBoardAssets);
 
 // URL Params Initialization
 if (params.get('room')) {
@@ -721,6 +896,13 @@ if (params.get('room')) {
 if (elements.assetFiles) elements.assetFiles.addEventListener('change', uploadAssets);
 if (elements.assetList) {
   elements.assetList.addEventListener('click', async (event) => {
+    const placeButton = event.target.closest('.asset-place');
+    if (placeButton) {
+      socket.emit('place-board-asset', { key: placeButton.dataset.assetKey }, (result) => {
+        if (!result?.ok && elements.assetStatus) elements.assetStatus.textContent = result?.error || '画像を配置できませんでした';
+      });
+      return;
+    }
     const button = event.target.closest('.asset-delete');
     if (!button) return;
     try {
@@ -733,6 +915,84 @@ if (elements.assetList) {
     } catch (e) {
       console.error('Failed to delete asset:', e);
     }
+  });
+}
+
+if (elements.layerList) {
+  elements.layerList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-layer-action]');
+    if (!button || state.currentRole !== 'gm') return;
+    const payload = { assetId: button.dataset.assetId, groupId: button.dataset.groupId, action: button.dataset.layerAction };
+    if (button.dataset.visible !== undefined) payload.visible = button.dataset.visible === 'true';
+    if (button.dataset.locked !== undefined) payload.locked = button.dataset.locked === 'true';
+    socket.emit('update-board-asset', payload, (result) => {
+      if (!result?.ok && elements.status) elements.status.textContent = result?.error || 'レイヤーを更新できませんでした';
+    });
+  });
+  elements.layerList.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('.layer-select');
+    if (!checkbox) return;
+    if (checkbox.checked) state.selectedLayerIds.add(checkbox.dataset.assetId);
+    else state.selectedLayerIds.delete(checkbox.dataset.assetId);
+    if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+  });
+  elements.layerList.addEventListener('dragstart', (event) => {
+    const row = event.target.closest('.layer-row[draggable="true"]');
+    if (!row || event.target.closest('button, input')) { event.preventDefault(); return; }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', row.dataset.assetId);
+    row.classList.add('is-dragging');
+  });
+  elements.layerList.addEventListener('dragend', (event) => {
+    event.target.closest('.layer-row')?.classList.remove('is-dragging');
+    elements.layerList.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
+  });
+  elements.layerList.addEventListener('dragover', (event) => {
+    if (state.currentRole !== 'gm' || !event.target.closest('.layer-row')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  });
+  elements.layerList.addEventListener('drop', (event) => {
+    if (state.currentRole !== 'gm') return;
+    const targetRow = event.target.closest('.layer-row');
+    const draggedId = event.dataTransfer.getData('text/plain');
+    if (!targetRow || !draggedId || draggedId === targetRow.dataset.assetId) return;
+    event.preventDefault();
+    const visibleOrder = [...state.boardAssets].reverse();
+    const sourceIndex = visibleOrder.findIndex((asset) => asset.id === draggedId);
+    const targetIndex = visibleOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [draggedAsset] = visibleOrder.splice(sourceIndex, 1);
+    visibleOrder.splice(targetIndex, 0, draggedAsset);
+    state.boardAssets = [...visibleOrder].reverse();
+    renderBoardAssets();
+    socket.emit('update-board-asset', { assetId: draggedId, action: 'reorder', order: visibleOrder.map((asset) => asset.id) }, (result) => {
+      if (!result?.ok && elements.status) elements.status.textContent = result?.error || 'レイヤーを並べ替えられませんでした';
+    });
+  });
+}
+
+if (elements.layerGroupForm) {
+  elements.layerGroupForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.currentRole !== 'gm') return;
+    if (state.selectedLayerIds.size < 2) {
+      if (elements.status) elements.status.textContent = 'グループ化するレイヤーを2つ以上選択してください';
+      return;
+    }
+    const existingNames = new Set(state.boardAssets.map((asset) => asset.groupName).filter(Boolean));
+    let groupNumber = 1;
+    while (existingNames.has(`グループ${groupNumber}`)) groupNumber += 1;
+    const groupName = elements.layerGroupName?.value.trim() || `グループ${groupNumber}`;
+    socket.emit('update-board-asset', { action: 'group', assetIds: [...state.selectedLayerIds], groupName }, (result) => {
+      if (!result?.ok) {
+        if (elements.status) elements.status.textContent = result?.error || 'グループを作成できませんでした';
+        return;
+      }
+      state.selectedLayerIds.clear();
+      if (elements.layerGroupName) elements.layerGroupName.value = '';
+      renderBoardAssets(result.boardAssets);
+    });
   });
 }
 
