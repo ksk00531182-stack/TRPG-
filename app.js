@@ -50,6 +50,8 @@ const elements = {
   assetUpload: $('#assetUpload'),
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
+  playAreaAssetPanel: $('#playAreaAssetPanel'),
+  playAreaTabs: document.querySelectorAll('.play-area-tab'),
   copyLink: $('#copyLink')
 };
 
@@ -650,6 +652,19 @@ if (elements.messageInput) {
 if (elements.memoInput) {
   elements.memoInput.addEventListener('input', () => saveMemo(state.currentRoomId, elements.memoInput.value));
 }
+
+elements.playAreaTabs?.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    const shouldClose = tab.classList.contains('is-active') && elements.playAreaAssetPanel && !elements.playAreaAssetPanel.hidden;
+    elements.playAreaTabs.forEach((item) => {
+      const active = !shouldClose && item === tab;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    if (elements.playAreaAssetPanel) elements.playAreaAssetPanel.hidden = shouldClose;
+    if (!shouldClose && elements.assetCategory) elements.assetCategory.value = tab.dataset.assetCategory;
+  });
+});
 
 // Socket Events
 socket.on('connect', () => { if (elements.status) elements.status.textContent = '接続中'; });

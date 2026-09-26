@@ -26,13 +26,24 @@
     </section>
     <section class="room" id="room" hidden>
       <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
-      <section class="assets panel">
-        <div class="assets-heading"><div><h3>素材ストレージ</h3></div><span id="assetStatus"></span></div>
-        <div class="asset-upload gm-only" id="assetUpload" hidden><select id="assetCategory" aria-label="素材カテゴリー"><option value="characters">キャラクター</option><option value="materials">資料</option><option value="icons">アイコン</option><option value="backgrounds">背景</option><option value="bgm">BGM</option></select><label class="file-picker">ファイルを選択<input id="assetFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/ogg,audio/wav" multiple></label></div>
-        <div class="asset-list" id="assetList"><p class="empty-assets">素材を読み込んでいます...</p></div>
-      </section>
       <div class="room-grid">
-        <main class="play-area" aria-label="プレイエリア"><p>プレイエリア</p></main>
+        <main class="play-area" aria-label="プレイエリア">
+          <div class="play-area-tools">
+            <div class="play-area-tabs" role="tablist" aria-label="プレイエリア素材切り替え">
+              <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true" data-asset-category="characters">キャラクター</button>
+              <button class="play-area-tab" type="button" role="tab" aria-selected="false" data-asset-category="backgrounds">背景</button>
+              <button class="play-area-tab" type="button" role="tab" aria-selected="false" data-asset-category="materials">資料</button>
+              <button class="play-area-tab" type="button" role="tab" aria-selected="false" data-asset-category="icons">アイコン</button>
+              <button class="play-area-tab" type="button" role="tab" aria-selected="false" data-asset-category="bgm">BGM</button>
+            </div>
+            <section id="playAreaAssetPanel" class="assets" aria-label="プレイエリア素材" hidden>
+              <div class="assets-heading"><span id="assetStatus"></span></div>
+              <div class="asset-upload gm-only" id="assetUpload" hidden><select id="assetCategory" aria-label="素材カテゴリー"><option value="characters">キャラクター</option><option value="materials">資料</option><option value="icons">アイコン</option><option value="backgrounds">背景</option><option value="bgm">BGM</option></select><label class="file-picker">サーバーに画像を追加<input id="assetFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/ogg,audio/wav" multiple></label></div>
+              <div class="asset-list" id="assetList"><p class="empty-assets">素材を読み込んでいます...</p></div>
+            </section>
+          </div>
+          <p class="play-area-empty">プレイエリア</p>
+        </main>
         <aside class="session-sidebar">
         <section class="session-panel panel">
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
