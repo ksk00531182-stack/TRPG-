@@ -35,6 +35,7 @@
         <section class="session-panel panel">
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
             <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
+            <button id="diceTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="dicePanel">ダイスロール</button>
             <button id="membersTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="membersPanel">参加者</button>
             <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
           </div>
@@ -42,6 +43,18 @@
             <div class="chat-heading"><span id="typing"></span></div>
             <div class="message-list" id="messageList" aria-live="polite"></div>
             <form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="2" maxlength="2000" placeholder="メッセージを入力..." required></textarea><button type="submit">送信 <span>↗</span></button></form>
+          </div>
+          <div id="dicePanel" class="tab-panel dice-panel" role="tabpanel" aria-labelledby="diceTab" hidden>
+            <h3>一般ダイス</h3>
+            <div class="dice-grid" aria-label="ダイスロール">
+              <button type="button" class="dice-button" data-dice-sides="100">1D100</button>
+              <button type="button" class="dice-button" data-dice-sides="20">1D20</button>
+              <button type="button" class="dice-button" data-dice-sides="12">1D12</button>
+              <button type="button" class="dice-button" data-dice-sides="10">1D10</button>
+              <button type="button" class="dice-button" data-dice-sides="8">1D8</button>
+              <button type="button" class="dice-button" data-dice-sides="6">1D6</button>
+              <button type="button" class="dice-button" data-dice-sides="4">1D4</button>
+            </div>
           </div>
           <div id="membersPanel" class="tab-panel" role="tabpanel" aria-labelledby="membersTab" hidden>
             <ul id="memberList"></ul>

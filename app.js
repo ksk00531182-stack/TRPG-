@@ -22,9 +22,11 @@ const elements = {
   roomLibrary: $('#roomLibrary'),
   roomList: $('#roomList'),
   chatTab: $('#chatTab'),
+  diceTab: $('#diceTab'),
   membersTab: $('#membersTab'),
   memoTab: $('#memoTab'),
   chatPanel: $('#chatPanel'),
+  dicePanel: $('#dicePanel'),
   membersPanel: $('#membersPanel'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
@@ -497,20 +499,32 @@ if (elements.roomLibrary) {
 
 function switchSessionTab(tab) {
   const showChat = tab === 'chat';
+  const showDice = tab === 'dice';
   const showMembers = tab === 'members';
   elements.chatPanel.hidden = !showChat;
+  elements.dicePanel.hidden = !showDice;
   elements.membersPanel.hidden = !showMembers;
   elements.memoPanel.hidden = tab !== 'memo';
   elements.chatTab.classList.toggle('is-active', showChat);
+  elements.diceTab.classList.toggle('is-active', showDice);
   elements.membersTab.classList.toggle('is-active', showMembers);
   elements.memoTab.classList.toggle('is-active', tab === 'memo');
   elements.chatTab.setAttribute('aria-selected', String(showChat));
+  elements.diceTab.setAttribute('aria-selected', String(showDice));
   elements.membersTab.setAttribute('aria-selected', String(showMembers));
   elements.memoTab.setAttribute('aria-selected', String(tab === 'memo'));
 }
 elements.chatTab?.addEventListener('click', () => switchSessionTab('chat'));
+elements.diceTab?.addEventListener('click', () => switchSessionTab('dice'));
 elements.membersTab?.addEventListener('click', () => switchSessionTab('members'));
 elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
+
+elements.dicePanel?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-dice-sides]');
+  if (!button) return;
+  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1 });
+  switchSessionTab('chat');
+});
 
 if (elements.roomList) {
   elements.roomList.addEventListener('click', (event) => {

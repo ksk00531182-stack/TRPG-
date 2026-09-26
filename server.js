@@ -348,6 +348,31 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
+  socket.on('roll-dice', ({ sides, count = 1 } = {}) => {
+    const id = socket.data.roomId;
+    const member = socket.data.member;
+    const room = id && rooms.get(id);
+    const diceSides = Number(sides);
+    const diceCount = Number(count);
+    if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20) return;
+    const results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
+    const total = results.reduce((sum, result) => sum + result, 0);
+    const message = {
+      id: `${Date.now()}-${socket.id}`,
+      text: `${member.name} が ${diceCount}D${diceSides} を振りました: ${results.join(', ')} (合計 ${total})`,
+      name: member.name,
+      role: member.role,
+      scope: 'public',
+      senderId: socket.id,
+      senderPlayerId: member.playerId || '',
+      time: new Date().toISOString()
+    };
+    room.messages.push(message);
+    if (room.messages.length > 200) room.messages.shift();
+    touchRoom(room);
+    io.to(`room:${id}`).emit('message', message);
+  });
+
   socket.on('typing', (isTyping) => {
     const id = socket.data.roomId;
     if (id && socket.data.member) socket.to(`room:${id}`).emit('typing', { name: socket.data.member.name, isTyping: Boolean(isTyping) });
