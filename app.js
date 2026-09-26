@@ -29,6 +29,10 @@ const elements = {
   dicePanel: $('#dicePanel'),
   secretDiceOption: $('#secretDiceOption'),
   secretDiceInput: $('#secretDiceInput'),
+  diceActorOption: $('#diceActorOption'),
+  diceActor: $('#diceActor'),
+  npcForm: $('#npcForm'),
+  npcName: $('#npcName'),
   membersPanel: $('#membersPanel'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
@@ -270,6 +274,7 @@ function addMessage(message) {
 function renderMembers(members) {
   if (!elements.memberList || !Array.isArray(members)) return;
   elements.memberList.innerHTML = '';
+  if (elements.npcForm) elements.npcForm.hidden = state.currentRole !== 'gm';
   members.forEach((member) => {
     const li = document.createElement('li');
     
@@ -280,7 +285,7 @@ function renderMembers(members) {
     nameSpan.textContent = member.name || '';
     
     const roleSmall = document.createElement('small');
-    roleSmall.textContent = member.role === 'gm' ? 'GM' : 'PC';
+    roleSmall.textContent = member.role === 'gm' ? 'GM' : member.role === 'npc' ? 'NPC' : 'PC';
     
     li.append(presence, nameSpan, roleSmall);
     elements.memberList.appendChild(li);
@@ -298,6 +303,15 @@ function renderMembers(members) {
       option.value = member.playerId || member.id;
       option.textContent = `${member.name || '名前未設定'}${member.role === 'gm' ? '（GM）' : ''}`;
       elements.messageTarget.appendChild(option);
+    });
+  }
+  if (elements.diceActor) {
+    elements.diceActor.innerHTML = '<option value="">GM</option>';
+    members.filter((member) => member.role === 'npc').forEach((npc) => {
+      const option = document.createElement('option');
+      option.value = npc.id;
+      option.textContent = npc.name;
+      elements.diceActor.appendChild(option);
     });
   }
 }
@@ -450,6 +464,8 @@ function enterRoom(result, role) {
     elements.assetUpload.hidden = state.currentRole !== 'gm' || !result.r2Configured;
   }
   if (elements.secretDiceOption) elements.secretDiceOption.hidden = role !== 'gm';
+  if (elements.diceActorOption) elements.diceActorOption.hidden = role !== 'gm';
+  if (elements.npcForm) elements.npcForm.hidden = role !== 'gm';
   if (role !== 'gm' && elements.secretDiceInput) elements.secretDiceInput.checked = false;
   if (elements.entry) elements.entry.hidden = true;
   if (elements.room) elements.room.hidden = false;
@@ -536,7 +552,7 @@ elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
 elements.dicePanel?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-dice-sides]');
   if (!button) return;
-  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1, secret: Boolean(elements.secretDiceInput?.checked) });
+  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1, actorId: elements.diceActor?.value || '', secret: Boolean(elements.secretDiceInput?.checked) });
   switchSessionTab('chat');
 });
 
@@ -581,6 +597,22 @@ if (elements.roomList) {
   });
 }
 
+if (elements.npcForm) {
+  elements.npcForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = elements.npcName?.value.trim();
+    if (!name || state.currentRole !== 'gm') return;
+    socket.emit('add-npc', { name }, (result) => {
+      if (!result?.ok) {
+        if (elements.status) elements.status.textContent = result?.error || 'NPCを追加できませんでした';
+        return;
+      }
+      elements.npcName.value = '';
+      if (elements.status) elements.status.textContent = 'NPCを追加しました';
+    });
+  });
+}
+
 if (elements.messageForm) {
   elements.messageForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -589,7 +621,7 @@ if (elements.messageForm) {
     if (!text) return;
     const dice = parseDiceNotation(text);
     if (dice) {
-      socket.emit('roll-dice', { ...dice, secret: Boolean(elements.secretDiceInput?.checked) });
+      socket.emit('roll-dice', { ...dice, actorId: elements.diceActor?.value || '', secret: Boolean(elements.secretDiceInput?.checked) });
     } else {
       socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
     }

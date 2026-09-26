@@ -47,6 +47,7 @@
           <div id="dicePanel" class="tab-panel dice-panel" role="tabpanel" aria-labelledby="diceTab" hidden>
             <h3>一般ダイス</h3>
             <label id="secretDiceOption" class="secret-dice-option" hidden><input id="secretDiceInput" type="checkbox"> シークレットダイス</label>
+            <label id="diceActorOption" class="dice-actor-option" hidden>ロールするキャラクター<select id="diceActor"><option value="">GM</option></select></label>
             <div class="dice-grid" aria-label="ダイスロール">
               <button type="button" class="dice-button" data-dice-sides="100">1D100</button>
               <button type="button" class="dice-button" data-dice-sides="20">1D20</button>
@@ -58,6 +59,7 @@
             </div>
           </div>
           <div id="membersPanel" class="tab-panel" role="tabpanel" aria-labelledby="membersTab" hidden>
+            <form id="npcForm" class="npc-form" hidden><input id="npcName" maxlength="40" placeholder="NPC名" required><button type="submit">NPCを追加</button></form>
             <ul id="memberList"></ul>
           </div>
           <div id="memoPanel" class="tab-panel" role="tabpanel" aria-labelledby="memoTab" hidden>

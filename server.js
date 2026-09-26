@@ -59,7 +59,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), assets: new Map(), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), npcs: new Map(), assets: new Map(), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -69,6 +69,7 @@ function persistRooms() {
     id,
     messages: room.messages,
     players: [...room.players.entries()],
+    npcs: [...room.npcs.entries()],
     assets: [...room.assets.entries()],
     inviteToken: room.inviteToken,
     gmToken: room.gmToken,
@@ -93,6 +94,7 @@ function loadPersistedRooms() {
         messages: Array.isArray(savedRoom.messages) ? savedRoom.messages : [],
         members: new Map(),
         players: new Map(savedRoom.players || []),
+        npcs: new Map(savedRoom.npcs || []),
         assets: new Map(savedRoom.assets || []),
         inviteToken: savedRoom.inviteToken,
         gmToken,
@@ -207,7 +209,10 @@ const server = http.createServer((request, response) => {
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
 loadPersistedRooms();
 
-function broadcastMembers(id) { io.to(`room:${id}`).emit('members', [...getRoom(id).members.values()]); }
+function broadcastMembers(id) {
+  const room = getRoom(id);
+  io.to(`room:${id}`).emit('members', [...room.members.values(), ...room.npcs.values()]);
+}
 function canSeeMessage(message, member) {
   if (message.scope !== 'private') return true;
   if (member.role === 'gm') return true;
@@ -291,6 +296,19 @@ io.on('connection', (socket) => {
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
 
+  socket.on('add-npc', ({ name } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const npcName = cleanText(name, 40);
+    if (!room || socket.data.member?.role !== 'gm' || !npcName) { acknowledge?.({ ok: false, error: 'GMのみNPCを追加できます。' }); return; }
+    if ([...room.npcs.values()].some((npc) => npc.name === npcName)) { acknowledge?.({ ok: false, error: '同じ名前のNPCがすでに存在します。' }); return; }
+    const npc = { id: `npc-${crypto.randomUUID()}`, name: npcName, role: 'npc' };
+    room.npcs.set(npc.id, npc);
+    touchRoom(room);
+    broadcastMembers(id);
+    acknowledge?.({ ok: true, npc });
+  });
+
   socket.on('duplicate-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const sourceRoom = id && rooms.get(id);
@@ -363,7 +381,7 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
-  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', secret = false } = {}) => {
+  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false } = {}) => {
     const id = socket.data.roomId;
     const member = socket.data.member;
     const room = id && rooms.get(id);
@@ -371,6 +389,8 @@ io.on('connection', (socket) => {
     const diceCount = Number(count);
     const diceModifier = Number(modifier);
     if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20 || !Number.isInteger(diceModifier) || Math.abs(diceModifier) > 100000) return;
+    const actor = member.role === 'gm' && actorId ? room.npcs.get(actorId) : member;
+    if (!actor) return;
     const results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
     const total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
     const isSecret = Boolean(secret) && member.role === 'gm';
@@ -380,10 +400,10 @@ io.on('connection', (socket) => {
     const message = {
       id: `${Date.now()}-${socket.id}`,
       text: isSecret
-        ? `${member.name}がシークレットダイスを振りました：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
-        : `${member.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
-      name: member.name,
-      role: member.role,
+        ? `${actor.name}がシークレットダイスを振りました：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
+        : `${actor.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
+      name: actor.name,
+      role: actor.role,
       scope: 'public',
       senderId: socket.id,
       senderPlayerId: member.playerId || '',
