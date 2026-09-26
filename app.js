@@ -53,11 +53,11 @@ const elements = {
   playArea: document.querySelector('.play-area'),
   boardAssets: $('#boardAssets'),
   characterBoardAssets: $('#characterBoardAssets'),
-  boardBgmPlayers: $('#boardBgmPlayers'),
   layerBox: $('#layerBox'),
   layerBoxHandle: $('#layerBox h3'),
   layerList: $('#layerList'),
   characterLayerList: $('#characterLayerList'),
+  bgmLayerList: $('#bgmLayerList'),
   layerGroupForm: $('#layerGroupForm'),
   layerGroupName: $('#layerGroupName'),
   layerArrangeTools: $('#layerArrangeTools'),
@@ -473,7 +473,7 @@ function playBgm(player, startedAt = Date.now()) {
 }
 
 function renderBoardAssets(boardAssets = state.boardAssets) {
-  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.boardBgmPlayers || !elements.layerList || !elements.characterLayerList) return;
+  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList) return;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   const activeBgmIds = new Set(state.boardAssets.filter((asset) => asset.category === 'bgm').map((asset) => asset.id));
   state.bgmPlayers.forEach((player, assetId) => {
@@ -483,16 +483,15 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     }
   });
   elements.playArea?.classList.toggle('has-oversized-board-asset', state.boardAssets.some((asset) => asset.visible !== false && asset.groupVisible !== false && (Number(asset.width) > 1 || Number(asset.height) > 1)));
-  state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id && !asset.locked)));
+  state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id && !asset.locked && asset.category !== 'bgm')));
   if (!state.boardAssets.some((asset) => asset.id === state.selectedBoardAssetId && !asset.locked)) state.selectedBoardAssetId = '';
   elements.boardAssets.inert = false;
   elements.characterBoardAssets.inert = false;
   elements.boardAssets.innerHTML = '';
   elements.characterBoardAssets.innerHTML = '';
-  elements.boardBgmPlayers.innerHTML = '';
-  elements.boardBgmPlayers.hidden = state.currentRole !== 'gm';
   elements.layerList.innerHTML = '';
   elements.characterLayerList.innerHTML = '';
+  elements.bgmLayerList.innerHTML = '';
   if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || state.boardAssets.length === 0;
   if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
   if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
@@ -509,49 +508,6 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     }
     if (placedAsset.category === 'bgm' && asset.type?.startsWith('audio/')) {
       const player = getBgmPlayer(placedAsset, asset);
-      const controller = document.createElement('section');
-      controller.className = 'board-bgm-player';
-      controller.setAttribute('aria-label', `BGM ${placedAsset.name || asset.name || ''}`);
-      const title = document.createElement('strong');
-      title.className = 'board-bgm-title';
-      title.textContent = placedAsset.name || asset.name || 'BGM';
-      const playButton = document.createElement('button');
-      playButton.type = 'button';
-      playButton.textContent = '再生';
-      playButton.title = 'BGMを再生（ループ）';
-      playButton.addEventListener('click', () => {
-        placedAsset.bgmPlaying = true;
-        placedAsset.bgmStartedAt = Date.now();
-        playBgm(player);
-        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'play' });
-      });
-      const stopButton = document.createElement('button');
-      stopButton.type = 'button';
-      stopButton.textContent = '停止';
-      stopButton.title = 'BGMを停止';
-      stopButton.addEventListener('click', () => {
-        placedAsset.bgmPlaying = false;
-        placedAsset.bgmStartedAt = 0;
-        stopBgm(player);
-        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'stop' });
-      });
-      const volumeLabel = document.createElement('label');
-      volumeLabel.className = 'board-bgm-volume';
-      volumeLabel.textContent = '音量';
-      const volumeInput = document.createElement('input');
-      volumeInput.type = 'range';
-      volumeInput.min = '0';
-      volumeInput.max = '1';
-      volumeInput.step = '0.01';
-      volumeInput.value = String(player.audio.volume);
-      volumeInput.setAttribute('aria-label', `${title.textContent}の音量`);
-      volumeInput.addEventListener('input', () => { player.audio.volume = Number(volumeInput.value); });
-      volumeLabel.appendChild(volumeInput);
-      const loopLabel = document.createElement('small');
-      loopLabel.className = 'board-bgm-loop';
-      loopLabel.textContent = 'LOOP';
-      controller.append(title, playButton, stopButton, volumeLabel, loopLabel);
-      elements.boardBgmPlayers.appendChild(controller);
       if (placedAsset.bgmPlaying) playBgm(player, placedAsset.bgmStartedAt || Date.now());
       else if (!player.audio.paused) stopBgm(player);
       return;
@@ -673,14 +629,17 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
 
   const layerSections = [
     { assets: [...state.boardAssets].reverse().filter((asset) => asset.category === 'characters'), list: elements.characterLayerList },
-    { assets: [...state.boardAssets].reverse().filter((asset) => asset.category !== 'characters'), list: elements.layerList }
+    { assets: [...state.boardAssets].reverse().filter((asset) => asset.category !== 'characters' && asset.category !== 'bgm'), list: elements.layerList },
+    { assets: [...state.boardAssets].reverse().filter((asset) => asset.category === 'bgm'), list: elements.bgmLayerList }
   ];
   layerSections.forEach(({ assets: displayOrder, list }) => {
     let activeGroupId = null;
     displayOrder.forEach((placedAsset) => {
     const asset = state.assets.find((item) => item.key === placedAsset.key);
-    if (placedAsset.groupId !== activeGroupId) {
-      activeGroupId = placedAsset.groupId || null;
+    const isBgmLayer = placedAsset.category === 'bgm';
+    const layerGroupId = isBgmLayer ? null : placedAsset.groupId || null;
+    if (layerGroupId !== activeGroupId) {
+      activeGroupId = layerGroupId;
       if (activeGroupId) {
         const groupAssets = state.boardAssets.filter((asset) => asset.groupId === activeGroupId);
         const groupRow = document.createElement('li');
@@ -721,10 +680,10 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       }
     }
     const row = document.createElement('li');
-    row.className = `layer-row${placedAsset.groupId ? ' is-grouped' : ''}${placedAsset.locked ? ' is-locked' : ''}`;
+    row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
     row.dataset.assetId = placedAsset.id;
-    row.draggable = state.currentRole === 'gm' && !placedAsset.locked;
-    if (state.currentRole === 'gm') {
+    row.draggable = state.currentRole === 'gm' && !isBgmLayer && !placedAsset.locked;
+    if (state.currentRole === 'gm' && !isBgmLayer) {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'layer-select';
@@ -734,17 +693,63 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       checkbox.setAttribute('aria-label', `${placedAsset.name || '画像'}を選択`);
       row.appendChild(checkbox);
     }
-    const thumbnail = document.createElement('img');
-    thumbnail.className = 'layer-thumbnail';
-    thumbnail.src = asset?.url || '';
-    thumbnail.alt = '';
-    thumbnail.draggable = false;
-    row.appendChild(thumbnail);
+    if (isBgmLayer) {
+      const icon = document.createElement('span');
+      icon.className = 'layer-bgm-icon';
+      icon.textContent = '♫';
+      icon.setAttribute('aria-hidden', 'true');
+      row.appendChild(icon);
+    } else {
+      const thumbnail = document.createElement('img');
+      thumbnail.className = 'layer-thumbnail';
+      thumbnail.src = asset?.url || '';
+      thumbnail.alt = '';
+      thumbnail.draggable = false;
+      row.appendChild(thumbnail);
+    }
     const name = document.createElement('span');
     name.className = 'layer-name';
     name.textContent = placedAsset.name || '画像';
     row.appendChild(name);
-    if (state.currentRole === 'gm') {
+    if (state.currentRole === 'gm' && isBgmLayer && asset?.url && asset.type?.startsWith('audio/')) {
+      const player = getBgmPlayer(placedAsset, asset);
+      const controls = document.createElement('div');
+      controls.className = 'layer-controls bgm-layer-controls';
+      const playButton = document.createElement('button');
+      playButton.type = 'button';
+      playButton.textContent = '再生';
+      playButton.title = 'BGMを再生（ループ）';
+      playButton.addEventListener('click', () => {
+        placedAsset.bgmPlaying = true;
+        placedAsset.bgmStartedAt = Date.now();
+        playBgm(player);
+        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'play' });
+      });
+      const stopButton = document.createElement('button');
+      stopButton.type = 'button';
+      stopButton.textContent = '停止';
+      stopButton.title = 'BGMを停止';
+      stopButton.addEventListener('click', () => {
+        placedAsset.bgmPlaying = false;
+        placedAsset.bgmStartedAt = 0;
+        stopBgm(player);
+        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'stop' });
+      });
+      const volumeLabel = document.createElement('label');
+      volumeLabel.className = 'bgm-layer-volume';
+      volumeLabel.textContent = '音量';
+      const volumeInput = document.createElement('input');
+      volumeInput.type = 'range';
+      volumeInput.min = '0';
+      volumeInput.max = '1';
+      volumeInput.step = '0.01';
+      volumeInput.value = String(player.audio.volume);
+      volumeInput.setAttribute('aria-label', `${name.textContent}の音量`);
+      volumeInput.addEventListener('input', () => { player.audio.volume = Number(volumeInput.value); });
+      volumeLabel.appendChild(volumeInput);
+      controls.append(playButton, stopButton, volumeLabel);
+      row.appendChild(controls);
+    } else if (state.currentRole === 'gm' && !isBgmLayer) {
       const controls = document.createElement('div');
       controls.className = 'layer-controls';
       const lockButton = document.createElement('button');
@@ -767,7 +772,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       visibilityButton.setAttribute('aria-label', visibilityButton.title);
       controls.appendChild(visibilityButton);
       row.appendChild(controls);
-    } else {
+    } else if (!isBgmLayer) {
       const status = document.createElement('small');
       status.className = `layer-status-icons${placedAsset.locked ? ' is-locked' : ''}`;
       status.textContent = `${placedAsset.locked ? '🔒' : ''}${placedAsset.visible === false ? '○' : '👁'}`;

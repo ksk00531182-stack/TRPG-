@@ -359,7 +359,7 @@ io.on('connection', (socket) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const boardAsset = room?.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
-    if (!room || !socket.data.member || !boardAsset || !['play', 'stop'].includes(action)) {
+    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'stop'].includes(action)) {
       acknowledge?.({ ok: false, error: 'BGMを操作できません。' });
       return;
     }
@@ -401,7 +401,7 @@ io.on('connection', (socket) => {
     if (['align-selected', 'match-size-selected', 'stack-selected'].includes(action)) {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
       const selectedAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
-      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset)) {
+      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset || asset.category === 'bgm')) {
         acknowledge?.({ ok: false, error: 'GMとして2つ以上のレイヤーを選択してください。' });
         return;
       }
@@ -425,6 +425,7 @@ io.on('connection', (socket) => {
       const name = cleanText(groupName, 40);
       const selectedLayerAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
       if (member.role !== 'gm' || selectedIds.length < 2 || !name || selectedLayerAssets.some((asset) => !asset)
+        || selectedLayerAssets.some((asset) => asset.category === 'bgm')
         || new Set(selectedLayerAssets.map((asset) => asset.category)).size > 1) {
         acknowledge?.({ ok: false, error: 'グループ名と2つ以上のレイヤーを選択してください。' });
         return;
@@ -456,7 +457,9 @@ io.on('connection', (socket) => {
       }
     } else if (action === 'ungroup') {
       if (member.role !== 'gm' || !groupId) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
-      room.boardAssets.filter((asset) => asset.groupId === groupId).forEach((asset) => {
+      const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
+      if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
+      groupedAssets.forEach((asset) => {
         delete asset.groupId;
         delete asset.groupName;
         delete asset.groupVisible;
@@ -465,6 +468,7 @@ io.on('connection', (socket) => {
       if (member.role !== 'gm' || !groupId) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
       if (!groupedAssets.length) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
+      if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
       if (action === 'toggle-group-lock') groupedAssets.forEach((asset) => { asset.locked = Boolean(locked); });
       else groupedAssets.forEach((asset) => { asset.groupVisible = Boolean(visible); });
     } else {
@@ -473,6 +477,10 @@ io.on('connection', (socket) => {
     const boardAsset = room.boardAssets[assetIndex];
     const canEditBoardAsset = member.role === 'gm'
       || (boardAsset.category === 'characters' && boardAsset.assignedPlayerId === member.playerId && Boolean(member.playerId));
+    if (boardAsset.category === 'bgm' && ['move', 'resize', 'toggle-lock', 'toggle-visibility'].includes(action)) {
+      acknowledge?.({ ok: false, error: 'BGMレイヤーではこの操作を使用できません。' });
+      return;
+    }
 
     if (action === 'reorder') {
       if (member.role !== 'gm' || !Array.isArray(order)) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
