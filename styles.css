@@ -62,7 +62,7 @@
 .board-asset-image:active { cursor: grabbing; }
 .board-asset-image.is-locked { cursor: not-allowed; }
 .layer-box { position: absolute; z-index: 3; left: 12px; bottom: 12px; width: min(300px, calc(100% - 24px)); max-height: 38%; overflow: auto; border: 1px solid var(--line); background: rgba(32, 36, 34, .96); box-shadow: 0 8px 24px rgba(0, 0, 0, .32); }
-.layer-box h3 { position: sticky; top: 0; margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.layer-box h3 { position: sticky; top: 0; margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; cursor: move; touch-action: none; user-select: none; }
 .layer-group-form { display: flex; gap: 6px; padding: 7px; border-bottom: 1px solid var(--line); }
 .layer-group-form input { min-width: 0; padding: 7px 8px; font-size: 11px; }
 .layer-group-form button { padding: 6px 8px; font-size: 10px; white-space: nowrap; }
@@ -104,6 +104,7 @@
 .asset-card .asset-place img { width: 100%; height: 100%; object-fit: cover; }
 .board-object { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; }
 .board-object.is-selected { outline: 1px solid var(--accent); outline-offset: 1px; }
+.board-object.is-multi-selected:not(.is-selected) { outline: 1px dashed var(--green); outline-offset: 2px; }
 .board-object.is-locked { cursor: not-allowed; }
 .board-object .board-asset-image { position: static; display: block; width: 100%; height: 100%; object-fit: contain; transform: none; pointer-events: auto; }
 .bounding-handle { position: absolute; z-index: 2; width: 10px; height: 10px; min-width: 10px; padding: 0; border: 1px solid #242724; background: #f5f1e8; }

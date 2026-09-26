@@ -19,7 +19,7 @@ const contentTypes = {
 };
 
 const maxAssetSize = 25 * 1024 * 1024;
-const assetCategories = new Set(['characters', 'materials', 'icons', 'backgrounds', 'bgm']);
+const assetCategories = new Set(['characters', 'npcs', 'materials', 'icons', 'backgrounds', 'bgm']);
 const allowedAssetTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'audio/mpeg', 'audio/ogg', 'audio/wav']);
 
 const r2Configured = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME'].every((key) => Boolean(process.env[key]));
@@ -157,17 +157,22 @@ async function handleAssetApi(request, response, requestPath) {
       }
       return { ...asset, size: object.Size, updatedAt: object.LastModified, url };
     }));
-    sendJson(response, 200, { assets });
+    const visibleAssetKeys = new Set(room.boardAssets.filter((asset) => asset.visible !== false).map((asset) => asset.key));
+    const visibleAssets = session.role === 'pc'
+      ? assets.filter((asset) => asset.category !== 'npcs' || visibleAssetKeys.has(asset.key))
+      : assets;
+    sendJson(response, 200, { assets: visibleAssets });
     return true;
   }
 
   if (request.method === 'POST' && requestPath === '/api/assets/upload-url') {
-    if (session.role !== 'gm') { sendJson(response, 403, { error: 'GM only.' }); return true; }
     const payload = await readJson(request);
     const category = cleanText(payload.category, 30);
     const name = safeFileName(payload.name);
     const type = cleanText(payload.type, 100);
     const size = Number(payload.size);
+    const isPcCharacterImage = session.role === 'pc' && category === 'characters' && type.startsWith('image/');
+    if (session.role !== 'gm' && !isPcCharacterImage) { sendJson(response, 403, { error: 'PCはキャラクター画像のみ登録できます。' }); return true; }
     if (!assetCategories.has(category) || !allowedAssetTypes.has(type) || !Number.isInteger(size) || size < 1 || size > maxAssetSize) {
       sendJson(response, 400, { error: 'Unsupported category, file type, or size.' });
       return true;
@@ -316,20 +321,25 @@ io.on('connection', (socket) => {
     const room = id && rooms.get(id);
     const assetKey = typeof key === 'string' && key.startsWith(`rooms/${id}/`) ? key : '';
     const asset = assetKey && room?.assets.get(assetKey);
+    if (socket.data.member?.role === 'pc' && asset?.category === 'npcs') {
+      acknowledge?.({ ok: false, error: 'NPC素材はGMのみ配置できます。' });
+      return;
+    }
     if (!room || !socket.data.member || !asset || !asset.type?.startsWith('image/')) {
       acknowledge?.({ ok: false, error: '配置できる画像素材が見つかりません。' });
       return;
     }
     const placementIndex = room.boardAssets.length;
+    const isBackground = asset.category === 'backgrounds';
     const boardAsset = {
       id: crypto.randomUUID(),
       key: asset.key,
       name: asset.name,
       category: asset.category,
-      x: 0.5 + ((placementIndex % 5) - 2) * 0.08,
-      y: 0.5 + ((Math.floor(placementIndex / 5) % 5) - 2) * 0.08,
-      width: 0.16,
-      height: 0.19,
+      x: isBackground ? 0.5 : 0.5 + ((placementIndex % 5) - 2) * 0.08,
+      y: isBackground ? 0.5 : 0.5 + ((Math.floor(placementIndex / 5) % 5) - 2) * 0.08,
+      width: isBackground ? 0.9 : 0.16,
+      height: isBackground ? 0.82 : 0.19,
       placedBy: socket.data.member.name,
       locked: false,
       visible: true
@@ -615,7 +625,7 @@ io.on('connection', (socket) => {
 
   socket.on('asset-added', (asset) => {
     const id = socket.data.roomId;
-    if (id && socket.data.member?.role === 'gm' && asset?.key?.startsWith(`rooms/${id}/`)) io.to(`room:${id}`).emit('asset-added', asset);
+    if (id && socket.data.member && rooms.get(id)?.assets.has(asset?.key) && asset?.key?.startsWith(`rooms/${id}/`)) io.to(`room:${id}`).emit('asset-added', asset);
   });
 
   socket.on('disconnect', () => {

@@ -50,8 +50,10 @@ const elements = {
   assetUpload: $('#assetUpload'),
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
+  playArea: document.querySelector('.play-area'),
   boardAssets: $('#boardAssets'),
   layerBox: $('#layerBox'),
+  layerBoxHandle: $('#layerBox h3'),
   layerList: $('#layerList'),
   layerGroupForm: $('#layerGroupForm'),
   layerGroupName: $('#layerGroupName'),
@@ -338,8 +340,9 @@ function renderAssets(assets) {
   if (!visibleAssets.length) {
     const p = document.createElement('p');
     p.className = 'empty-assets';
-    p.textContent = 'このジャンルには素材がありません。';
+    p.textContent = state.currentRole === 'pc' ? '登録した画像がありません。' : 'このジャンルには素材がありません。';
     elements.assetList.appendChild(p);
+    renderBoardAssets();
     return;
   }
 
@@ -397,11 +400,12 @@ function renderAssets(assets) {
 function renderBoardAssets(boardAssets = state.boardAssets) {
   if (!elements.boardAssets || !elements.layerList) return;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
-  state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id)));
-  if (!state.boardAssets.some((asset) => asset.id === state.selectedBoardAssetId)) state.selectedBoardAssetId = '';
+  state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id && !asset.locked)));
+  if (!state.boardAssets.some((asset) => asset.id === state.selectedBoardAssetId && !asset.locked)) state.selectedBoardAssetId = '';
+  elements.boardAssets.inert = state.currentRole !== 'gm';
   elements.boardAssets.innerHTML = '';
   elements.layerList.innerHTML = '';
-  if (elements.layerBox) elements.layerBox.hidden = state.boardAssets.length === 0;
+  if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || state.boardAssets.length === 0;
   if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
   if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
 
@@ -410,7 +414,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     if (!asset?.url || placedAsset.visible === false) return;
     const object = document.createElement('div');
     const isSelected = state.selectedBoardAssetId === placedAsset.id;
-    object.className = `board-object${isSelected ? ' is-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}`;
+    const isMultiSelected = state.selectedLayerIds.has(placedAsset.id);
+    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}`;
     object.dataset.assetId = placedAsset.id;
     object.style.zIndex = String(index + 1);
     object.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
@@ -427,6 +432,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     if (!placedAsset.locked) {
       object.addEventListener('pointerdown', (event) => {
         if (event.target.closest('.bounding-handle')) return;
+        if (event.shiftKey) return;
         if (event.button !== 0) return;
         state.selectedBoardAssetId = placedAsset.id;
         event.preventDefault();
@@ -449,11 +455,20 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       });
     }
     object.addEventListener('click', (event) => {
-      if (event.target.closest('.bounding-handle')) return;
-      const selectionChanged = state.selectedBoardAssetId !== placedAsset.id || !state.selectedLayerIds.has(placedAsset.id);
-      state.selectedBoardAssetId = placedAsset.id;
-      state.selectedLayerIds.add(placedAsset.id);
-      if (selectionChanged) renderBoardAssets();
+      if (placedAsset.locked || event.target.closest('.bounding-handle')) return;
+      if (event.shiftKey) {
+        if (state.selectedLayerIds.has(placedAsset.id)) {
+          state.selectedLayerIds.delete(placedAsset.id);
+          if (state.selectedBoardAssetId === placedAsset.id) state.selectedBoardAssetId = [...state.selectedLayerIds].pop() || '';
+        } else {
+          state.selectedLayerIds.add(placedAsset.id);
+          state.selectedBoardAssetId = placedAsset.id;
+        }
+      } else {
+        state.selectedLayerIds = new Set([placedAsset.id]);
+        state.selectedBoardAssetId = placedAsset.id;
+      }
+      renderBoardAssets();
     });
     if (isSelected && !placedAsset.locked) {
       ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach((handle) => {
@@ -563,6 +578,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       checkbox.type = 'checkbox';
       checkbox.className = 'layer-select';
       checkbox.checked = state.selectedLayerIds.has(placedAsset.id);
+      checkbox.disabled = Boolean(placedAsset.locked);
       checkbox.dataset.assetId = placedAsset.id;
       checkbox.setAttribute('aria-label', `${placedAsset.name || '画像'}を選択`);
       row.appendChild(checkbox);
@@ -662,6 +678,10 @@ async function uploadAssets() {
   if (!elements.assetFiles || !elements.assetFiles.files) return;
   const files = [...elements.assetFiles.files];
   if (!files.length) return;
+  if (state.currentRole === 'pc' && files.some((file) => !file.type.startsWith('image/'))) {
+    if (elements.assetStatus) elements.assetStatus.textContent = '画像ファイルを選択してください';
+    return;
+  }
   
   if (elements.assetStatus) elements.assetStatus.textContent = `${files.length}件をアップロード中...`;
   
@@ -670,7 +690,7 @@ async function uploadAssets() {
       const permission = await fetch('/api/assets/upload-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
-        body: JSON.stringify({ category: elements.assetCategory?.value || 'materials', name: file.name, type: file.type, size: file.size })
+        body: JSON.stringify({ category: state.currentRole === 'pc' ? 'characters' : elements.assetCategory?.value || 'materials', name: file.name, type: file.type, size: file.size })
       });
       if (!permission.ok) throw new Error(`アップロード許可を取得できません (${permission.status})`);
 
@@ -709,6 +729,17 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  if (elements.assetCategory) {
+    if (role === 'pc') elements.assetCategory.value = 'characters';
+    const categoryLabel = elements.assetCategory.closest('.asset-genre');
+    if (categoryLabel) categoryLabel.hidden = role === 'pc';
+  }
+  elements.playAreaTabs?.forEach((tab) => { tab.textContent = role === 'pc' ? '登録' : '素材'; });
+  if (elements.assetFiles) {
+    elements.assetFiles.accept = role === 'pc'
+      ? 'image/png,image/jpeg,image/webp,image/gif'
+      : 'image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/ogg,audio/wav';
+  }
   renderBoardAssets();
   state.sessionToken = result.sessionToken;
   state.inviteToken = result.inviteToken || state.inviteToken;
@@ -731,9 +762,7 @@ function enterRoom(result, role) {
     });
   }
 
-  if (elements.assetUpload) {
-    elements.assetUpload.hidden = state.currentRole !== 'gm' || !result.r2Configured;
-  }
+  if (elements.assetUpload) elements.assetUpload.hidden = !result.r2Configured;
   if (elements.secretDiceOption) elements.secretDiceOption.hidden = role !== 'gm';
   if (elements.diceActorOption) elements.diceActorOption.hidden = role !== 'gm';
   if (elements.npcForm) elements.npcForm.hidden = role !== 'gm';
@@ -953,7 +982,11 @@ socket.on('typing', ({ name, isTyping }) => {
 });
 socket.on('asset-added', loadAssets);
 socket.on('asset-deleted', loadAssets);
-socket.on('board-assets', renderBoardAssets);
+socket.on('board-assets', (boardAssets) => {
+  const assets = Array.isArray(boardAssets) ? boardAssets : [];
+  renderBoardAssets(assets);
+  if (state.currentRole === 'pc' && assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
+});
 
 // URL Params Initialization
 if (params.get('room')) {
@@ -1033,10 +1066,14 @@ if (elements.layerList) {
   elements.layerList.addEventListener('change', (event) => {
     const checkbox = event.target.closest('.layer-select');
     if (!checkbox) return;
-    if (checkbox.checked) state.selectedLayerIds.add(checkbox.dataset.assetId);
-    else state.selectedLayerIds.delete(checkbox.dataset.assetId);
-    if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
-    if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+    if (checkbox.checked) {
+      state.selectedLayerIds.add(checkbox.dataset.assetId);
+      state.selectedBoardAssetId = checkbox.dataset.assetId;
+    } else {
+      state.selectedLayerIds.delete(checkbox.dataset.assetId);
+      if (state.selectedBoardAssetId === checkbox.dataset.assetId) state.selectedBoardAssetId = [...state.selectedLayerIds].pop() || '';
+    }
+    renderBoardAssets();
   });
   elements.layerList.addEventListener('dragstart', (event) => {
     const row = event.target.closest('.layer-row[draggable="true"]');
@@ -1074,6 +1111,38 @@ if (elements.layerList) {
   });
 }
 
+
+if (elements.layerBoxHandle && elements.layerBox && elements.playArea) {
+  elements.layerBoxHandle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    elements.layerBoxHandle.setPointerCapture(event.pointerId);
+    const bounds = elements.playArea.getBoundingClientRect();
+    const box = elements.layerBox.getBoundingClientRect();
+    const offsetX = event.clientX - box.left;
+    const offsetY = event.clientY - box.top;
+    elements.layerBox.style.left = `${box.left - bounds.left}px`;
+    elements.layerBox.style.top = `${box.top - bounds.top}px`;
+    elements.layerBox.style.right = 'auto';
+    elements.layerBox.style.bottom = 'auto';
+    const move = (pointerEvent) => {
+      const maxLeft = Math.max(0, bounds.width - box.width);
+      const maxTop = Math.max(0, bounds.height - box.height);
+      const left = Math.max(0, Math.min(maxLeft, pointerEvent.clientX - bounds.left - offsetX));
+      const top = Math.max(0, Math.min(maxTop, pointerEvent.clientY - bounds.top - offsetY));
+      elements.layerBox.style.left = `${left}px`;
+      elements.layerBox.style.top = `${top}px`;
+    };
+    const stop = () => {
+      elements.layerBoxHandle.removeEventListener('pointermove', move);
+      elements.layerBoxHandle.removeEventListener('pointerup', stop);
+      elements.layerBoxHandle.removeEventListener('pointercancel', stop);
+    };
+    elements.layerBoxHandle.addEventListener('pointermove', move);
+    elements.layerBoxHandle.addEventListener('pointerup', stop);
+    elements.layerBoxHandle.addEventListener('pointercancel', stop);
+  });
+}
 if (elements.layerArrangeTools) {
   elements.layerArrangeTools.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-layer-batch]');
@@ -1087,6 +1156,14 @@ if (elements.layerArrangeTools) {
     });
   });
 }
+
+elements.playArea?.addEventListener('click', (event) => {
+  if (event.target.closest('.board-object, .play-area-tools, .layer-box')) return;
+  if (!state.selectedLayerIds.size && !state.selectedBoardAssetId) return;
+  state.selectedLayerIds.clear();
+  state.selectedBoardAssetId = '';
+  renderBoardAssets();
+});
 
 if (elements.layerGroupForm) {
   elements.layerGroupForm.addEventListener('submit', (event) => {
