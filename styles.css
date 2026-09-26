@@ -35,3 +35,10 @@
 	.asset-card a { width: 44px; height: 44px; }
 }
 @media (max-width: 700px) { .asset-upload { align-items: stretch; flex-direction: column; } .asset-upload select { width: 100%; } }
+.room-grid { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: 18px; align-items: stretch; }
+.play-area { min-height: min(65vh, 720px); display: grid; place-items: center; border: 1px dashed var(--line); background: rgba(21, 24, 23, .72); color: var(--muted); }
+.play-area p { margin: 0; font-size: 13px; }
+.session-sidebar { min-width: 0; }
+.panel-tabs { overflow-x: auto; }
+.tab-button { white-space: nowrap; }
+@media (max-width: 900px) { .room-grid { grid-template-columns: 1fr; } .play-area { min-height: 42vh; } }

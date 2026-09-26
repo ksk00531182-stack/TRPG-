@@ -58,6 +58,7 @@ const state = {
   sessionToken: '',
   currentRole: 'pc',
   currentRoomId: '',
+  currentMembers: [],
   playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
@@ -273,6 +274,7 @@ function addMessage(message) {
 
 function renderMembers(members) {
   if (!elements.memberList || !Array.isArray(members)) return;
+  state.currentMembers = members;
   elements.memberList.innerHTML = '';
   if (elements.npcForm) elements.npcForm.hidden = state.currentRole !== 'gm';
   members.forEach((member) => {
@@ -466,6 +468,7 @@ function enterRoom(result, role) {
   if (elements.secretDiceOption) elements.secretDiceOption.hidden = role !== 'gm';
   if (elements.diceActorOption) elements.diceActorOption.hidden = role !== 'gm';
   if (elements.npcForm) elements.npcForm.hidden = role !== 'gm';
+  renderMembers(state.currentMembers);
   if (role !== 'gm' && elements.secretDiceInput) elements.secretDiceInput.checked = false;
   if (elements.entry) elements.entry.hidden = true;
   if (elements.room) elements.room.hidden = false;
