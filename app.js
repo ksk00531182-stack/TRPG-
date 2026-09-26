@@ -61,6 +61,7 @@ const state = {
   currentRole: 'pc',
   currentRoomId: '',
   currentMembers: [],
+  assets: [],
   playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
@@ -322,17 +323,18 @@ function renderMembers(members) {
 
 function renderAssets(assets) {
   if (!elements.assetList) return;
+  state.assets = Array.isArray(assets) ? assets : [];
   elements.assetList.innerHTML = '';
-  
-  if (!assets || !assets.length) {
+  const visibleAssets = state.assets.filter((asset) => asset.category === elements.assetCategory?.value);
+  if (!visibleAssets.length) {
     const p = document.createElement('p');
     p.className = 'empty-assets';
-    p.textContent = 'このルームには素材がありません。';
+    p.textContent = 'このジャンルには素材がありません。';
     elements.assetList.appendChild(p);
     return;
   }
 
-  assets.forEach((asset) => {
+  visibleAssets.forEach((asset) => {
     const article = document.createElement('article');
     article.className = 'asset-card';
 
@@ -662,9 +664,10 @@ elements.playAreaTabs?.forEach((tab) => {
       item.setAttribute('aria-selected', String(active));
     });
     if (elements.playAreaAssetPanel) elements.playAreaAssetPanel.hidden = shouldClose;
-    if (!shouldClose && elements.assetCategory) elements.assetCategory.value = tab.dataset.assetCategory;
   });
 });
+
+elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
 // Socket Events
 socket.on('connect', () => { if (elements.status) elements.status.textContent = '接続中'; });
