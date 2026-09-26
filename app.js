@@ -27,6 +27,8 @@ const elements = {
   memoTab: $('#memoTab'),
   chatPanel: $('#chatPanel'),
   dicePanel: $('#dicePanel'),
+  secretDiceOption: $('#secretDiceOption'),
+  secretDiceInput: $('#secretDiceInput'),
   membersPanel: $('#membersPanel'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
@@ -221,6 +223,16 @@ function updateSavedRoom(roomId, changes) {
 
 function roomInviteUrl(savedRoom) {
   return `${location.origin}${location.pathname}?room=${encodeURIComponent(savedRoom.roomId)}&invite=${encodeURIComponent(savedRoom.inviteToken)}`;
+}
+function parseDiceNotation(value) {
+  const normalized = value.normalize('NFKC').replace(/\s+/g, '');
+  const match = normalized.match(/^(\d+)[dD](\d+)(?:([+-])(\d+))?$/);
+  if (!match) return null;
+  const count = Number(match[1]);
+  const sides = Number(match[2]);
+  const modifier = match[3] ? (match[3] === '+' ? Number(match[4]) : -Number(match[4])) : 0;
+  if (!Number.isInteger(count) || count < 1 || count > 20 || !Number.isInteger(sides) || sides < 2 || sides > 1000 || Math.abs(modifier) > 100000) return null;
+  return { count, sides, modifier, expression: normalized };
 }
 
 function addMessage(message) {
@@ -437,6 +449,8 @@ function enterRoom(result, role) {
   if (elements.assetUpload) {
     elements.assetUpload.hidden = state.currentRole !== 'gm' || !result.r2Configured;
   }
+  if (elements.secretDiceOption) elements.secretDiceOption.hidden = role !== 'gm';
+  if (role !== 'gm' && elements.secretDiceInput) elements.secretDiceInput.checked = false;
   if (elements.entry) elements.entry.hidden = true;
   if (elements.room) elements.room.hidden = false;
 
@@ -522,7 +536,7 @@ elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
 elements.dicePanel?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-dice-sides]');
   if (!button) return;
-  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1 });
+  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1, secret: Boolean(elements.secretDiceInput?.checked) });
   switchSessionTab('chat');
 });
 
@@ -573,7 +587,12 @@ if (elements.messageForm) {
     if (!elements.messageInput) return;
     const text = elements.messageInput.value.trim();
     if (!text) return;
-    socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
+    const dice = parseDiceNotation(text);
+    if (dice) {
+      socket.emit('roll-dice', { ...dice, secret: Boolean(elements.secretDiceInput?.checked) });
+    } else {
+      socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
+    }
     elements.messageInput.value = '';
     if (elements.messageTarget) elements.messageTarget.value = '';
     socket.emit('typing', false);

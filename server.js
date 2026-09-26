@@ -37,6 +37,16 @@ const trpgSystems = Object.freeze({
 function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
 function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
 function normalizePlayerId(value) { return typeof value === 'string' && /^[^\s]{1,40}$/.test(value.trim()) ? value.trim() : null; }
+function parseDiceNotation(value) {
+  const normalized = typeof value === 'string' ? value.normalize('NFKC').replace(/\s+/g, '') : '';
+  const match = normalized.match(/^(\d+)[dD](\d+)(?:([+-])(\d+))?$/);
+  if (!match) return null;
+  const count = Number(match[1]);
+  const sides = Number(match[2]);
+  const modifier = match[3] ? (match[3] === '+' ? Number(match[4]) : -Number(match[4])) : 0;
+  if (!Number.isInteger(count) || count < 1 || count > 20 || !Number.isInteger(sides) || sides < 2 || sides > 1000 || Math.abs(modifier) > 100000) return null;
+  return { count, sides, modifier, expression: normalized };
+}
 
 function createRoomId() {
   let id;
@@ -206,6 +216,11 @@ function canSeeMessage(message, member) {
     || message.senderId === member.id
     || message.targetId === member.id;
 }
+function formatMessageForMember(message, member) {
+  if (!message.secret || member.role === 'gm') return message;
+  const { rollResults, rollTotal, ...visibleMessage } = message;
+  return { ...visibleMessage, text: `${message.name}がシークレットダイスを振りました：？` };
+}
 
 function clearSocketRoom(socket) {
   const previousRoomId = socket.data.roomId;
@@ -246,7 +261,7 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, { roomId: id, role: member.role, socketId: socket.id });
   socket.data.sessionToken = token;
-  socket.emit('history', room.messages.filter((message) => canSeeMessage(message, member)));
+  socket.emit('history', room.messages.filter((message) => canSeeMessage(message, member)).map((message) => formatMessageForMember(message, member)));
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
@@ -348,29 +363,45 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
-  socket.on('roll-dice', ({ sides, count = 1 } = {}) => {
+  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', secret = false } = {}) => {
     const id = socket.data.roomId;
     const member = socket.data.member;
     const room = id && rooms.get(id);
     const diceSides = Number(sides);
     const diceCount = Number(count);
-    if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20) return;
+    const diceModifier = Number(modifier);
+    if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20 || !Number.isInteger(diceModifier) || Math.abs(diceModifier) > 100000) return;
     const results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
-    const total = results.reduce((sum, result) => sum + result, 0);
+    const total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
+    const isSecret = Boolean(secret) && member.role === 'gm';
+    const notation = typeof expression === 'string' && /^\d+[dD]\d+(?:[+-]\d+)?$/.test(expression)
+      ? expression
+      : `${diceCount}D${diceSides}${diceModifier > 0 ? `+${diceModifier}` : diceModifier < 0 ? diceModifier : ''}`;
     const message = {
       id: `${Date.now()}-${socket.id}`,
-      text: `${member.name} が ${diceCount}D${diceSides} を振りました: ${results.join(', ')} (合計 ${total})`,
+      text: isSecret
+        ? `${member.name}がシークレットダイスを振りました：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
+        : `${member.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
       name: member.name,
       role: member.role,
       scope: 'public',
       senderId: socket.id,
       senderPlayerId: member.playerId || '',
+      secret: isSecret,
+      rollResults: results,
+      rollTotal: total,
       time: new Date().toISOString()
     };
     room.messages.push(message);
     if (room.messages.length > 200) room.messages.shift();
     touchRoom(room);
-    io.to(`room:${id}`).emit('message', message);
+    if (!isSecret) {
+      io.to(`room:${id}`).emit('message', message);
+      return;
+    }
+    for (const recipient of room.members.values()) {
+      io.to(recipient.id).emit('message', formatMessageForMember(message, recipient));
+    }
   });
 
   socket.on('typing', (isTyping) => {
