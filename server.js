@@ -97,7 +97,7 @@ function loadPersistedRooms() {
         players: new Map(savedRoom.players || []),
         npcs: new Map(savedRoom.npcs || []),
         assets: new Map(savedRoom.assets || []),
-        boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, locked: Boolean(asset.locked), visible: asset.visible !== false })) : [],
+        boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false })) : [],
         inviteToken: savedRoom.inviteToken,
         gmToken,
         systemId: savedRoom.systemId,
@@ -328,6 +328,8 @@ io.on('connection', (socket) => {
       category: asset.category,
       x: 0.5 + ((placementIndex % 5) - 2) * 0.08,
       y: 0.5 + ((Math.floor(placementIndex / 5) % 5) - 2) * 0.08,
+      width: 0.16,
+      height: 0.19,
       placedBy: socket.data.member.name,
       locked: false,
       visible: true
@@ -338,13 +340,35 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, boardAsset });
   });
 
-  socket.on('update-board-asset', ({ assetId, action, x, y, order, assetIds, groupId, groupName, visible, locked } = {}, acknowledge) => {
+  socket.on('update-board-asset', ({ assetId, action, x, y, width, height, order, assetIds, groupId, groupName, name: rawName, visible, locked } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const member = socket.data.member;
     if (!room || !member) { acknowledge?.({ ok: false, error: 'ルームに参加していません。' }); return; }
 
-    if (action === 'group') {
+    if (['align-selected', 'match-size-selected', 'stack-selected'].includes(action)) {
+      const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
+      const selectedAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
+      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset)) {
+        acknowledge?.({ ok: false, error: 'GMとして2つ以上のレイヤーを選択してください。' });
+        return;
+      }
+      if (selectedAssets.some((asset) => asset.locked)) {
+        acknowledge?.({ ok: false, error: 'ロック中のレイヤーを解除してから整列してください。' });
+        return;
+      }
+      const reference = selectedAssets[0];
+      selectedAssets.slice(1).forEach((asset) => {
+        if (action === 'align-selected' || action === 'stack-selected') {
+          asset.x = reference.x;
+          asset.y = reference.y;
+        }
+        if (action === 'match-size-selected' || action === 'stack-selected') {
+          asset.width = reference.width || 0.16;
+          asset.height = reference.height || 0.19;
+        }
+      });
+    } else if (action === 'group') {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
       const name = cleanText(groupName, 40);
       if (member.role !== 'gm' || selectedIds.length < 2 || !name || selectedIds.some((selectedId) => !room.boardAssets.some((asset) => asset.id === selectedId))) {
@@ -363,6 +387,18 @@ io.on('connection', (socket) => {
       const group = { id: crypto.randomUUID(), name };
       selectedAssets.forEach((asset) => { asset.groupId = group.id; asset.groupName = group.name; });
       room.boardAssets.splice(Math.min(firstIndex, room.boardAssets.length), 0, ...selectedAssets);
+    } else if (action === 'rename') {
+      const name = cleanText(rawName, 40);
+      if (member.role !== 'gm' || !name) { acknowledge?.({ ok: false, error: 'GMのみ名前を変更できます。' }); return; }
+      if (groupId) {
+        const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
+        if (!groupedAssets.length) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
+        groupedAssets.forEach((asset) => { asset.groupName = name; });
+      } else {
+        const renamedAsset = room.boardAssets.find((asset) => asset.id === assetId);
+        if (!renamedAsset) { acknowledge?.({ ok: false, error: 'レイヤーが見つかりません。' }); return; }
+        renamedAsset.name = name;
+      }
     } else if (action === 'ungroup') {
       if (member.role !== 'gm' || !groupId) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
       room.boardAssets.filter((asset) => asset.groupId === groupId).forEach((asset) => {
@@ -416,6 +452,16 @@ io.on('connection', (socket) => {
         asset.x = Math.max(0.03, Math.min(0.97, asset.x + offsetX));
         asset.y = Math.max(0.03, Math.min(0.97, asset.y + offsetY));
       });
+    } else if (action === 'resize') {
+      const nextX = Number(x);
+      const nextY = Number(y);
+      const nextWidth = Number(width);
+      const nextHeight = Number(height);
+      if (boardAsset.locked || ![nextX, nextY, nextWidth, nextHeight].every(Number.isFinite)) { acknowledge?.({ ok: false, error: 'この画像はサイズ変更できません。' }); return; }
+      boardAsset.x = Math.max(0.03, Math.min(0.97, nextX));
+      boardAsset.y = Math.max(0.03, Math.min(0.97, nextY));
+      boardAsset.width = Math.max(0.04, Math.min(0.9, nextWidth));
+      boardAsset.height = Math.max(0.04, Math.min(0.9, nextHeight));
     } else {
       if (member.role !== 'gm') { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
       if (action === 'toggle-lock') {

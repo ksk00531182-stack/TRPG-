@@ -55,6 +55,7 @@ const elements = {
   layerList: $('#layerList'),
   layerGroupForm: $('#layerGroupForm'),
   layerGroupName: $('#layerGroupName'),
+  layerArrangeTools: $('#layerArrangeTools'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
   playAreaTabs: document.querySelectorAll('.play-area-tab'),
   copyLink: $('#copyLink')
@@ -68,6 +69,7 @@ const state = {
   currentMembers: [],
   assets: [],
   boardAssets: [],
+  selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
   playerId: '',
   inviteToken: params.get('invite') || '',
@@ -396,68 +398,138 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
   if (!elements.boardAssets || !elements.layerList) return;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   state.selectedLayerIds = new Set([...state.selectedLayerIds].filter((id) => state.boardAssets.some((asset) => asset.id === id)));
+  if (!state.boardAssets.some((asset) => asset.id === state.selectedBoardAssetId)) state.selectedBoardAssetId = '';
   elements.boardAssets.innerHTML = '';
   elements.layerList.innerHTML = '';
   if (elements.layerBox) elements.layerBox.hidden = state.boardAssets.length === 0;
   if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+  if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
 
   state.boardAssets.forEach((placedAsset, index) => {
     const asset = state.assets.find((item) => item.key === placedAsset.key);
     if (!asset?.url || placedAsset.visible === false) return;
+    const object = document.createElement('div');
+    const isSelected = state.selectedBoardAssetId === placedAsset.id;
+    object.className = `board-object${isSelected ? ' is-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}`;
+    object.dataset.assetId = placedAsset.id;
+    object.style.zIndex = String(index + 1);
+    object.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
+    object.style.top = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.y) || 0.5)) * 100}%`;
+    object.style.width = `${Math.max(0.04, Math.min(0.9, Number(placedAsset.width) || 0.16)) * 100}%`;
+    object.style.height = `${Math.max(0.04, Math.min(0.9, Number(placedAsset.height) || 0.19)) * 100}%`;
     const image = document.createElement('img');
-    image.className = `board-asset-image${placedAsset.locked ? ' is-locked' : ''}`;
+    image.className = 'board-asset-image';
     image.src = asset.url;
     image.alt = placedAsset.name || asset.name || '';
     image.title = `${image.alt}（${placedAsset.placedBy || ''}）`;
     image.draggable = false;
-    image.style.zIndex = String(index + 1);
-    image.style.left = `${Math.max(0.05, Math.min(0.95, Number(placedAsset.x) || 0.5)) * 100}%`;
-    image.style.top = `${Math.max(0.05, Math.min(0.95, Number(placedAsset.y) || 0.5)) * 100}%`;
+    object.appendChild(image);
     if (!placedAsset.locked) {
-      image.addEventListener('pointerdown', (event) => {
+      object.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.bounding-handle')) return;
         if (event.button !== 0) return;
+        state.selectedBoardAssetId = placedAsset.id;
         event.preventDefault();
-        image.setPointerCapture(event.pointerId);
+        object.setPointerCapture(event.pointerId);
         const bounds = elements.boardAssets.getBoundingClientRect();
         const updatePosition = (pointerEvent) => {
-          image.style.left = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientX - bounds.left) / bounds.width)) * 100}%`;
-          image.style.top = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientY - bounds.top) / bounds.height)) * 100}%`;
+          object.style.left = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientX - bounds.left) / bounds.width)) * 100}%`;
+          object.style.top = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientY - bounds.top) / bounds.height)) * 100}%`;
         };
         const finishMove = (pointerEvent) => {
           updatePosition(pointerEvent);
-          image.removeEventListener('pointermove', updatePosition);
-          image.removeEventListener('pointerup', finishMove);
+          object.removeEventListener('pointermove', updatePosition);
+          object.removeEventListener('pointerup', finishMove);
           const x = (pointerEvent.clientX - bounds.left) / bounds.width;
           const y = (pointerEvent.clientY - bounds.top) / bounds.height;
           socket.emit('update-board-asset', { assetId: placedAsset.id, action: 'move', x, y });
         };
-        image.addEventListener('pointermove', updatePosition);
-        image.addEventListener('pointerup', finishMove);
+        object.addEventListener('pointermove', updatePosition);
+        object.addEventListener('pointerup', finishMove);
       });
     }
-    elements.boardAssets.appendChild(image);
+    object.addEventListener('click', (event) => {
+      if (event.target.closest('.bounding-handle')) return;
+      const selectionChanged = state.selectedBoardAssetId !== placedAsset.id || !state.selectedLayerIds.has(placedAsset.id);
+      state.selectedBoardAssetId = placedAsset.id;
+      state.selectedLayerIds.add(placedAsset.id);
+      if (selectionChanged) renderBoardAssets();
+    });
+    if (isSelected && !placedAsset.locked) {
+      ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach((handle) => {
+        const resizeHandle = document.createElement('button');
+        resizeHandle.type = 'button';
+        resizeHandle.className = `bounding-handle handle-${handle}`;
+        resizeHandle.dataset.handle = handle;
+        resizeHandle.setAttribute('aria-label', `画像サイズ変更 ${handle}`);
+        resizeHandle.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          resizeHandle.setPointerCapture(event.pointerId);
+          const bounds = elements.boardAssets.getBoundingClientRect();
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const initial = { x: Number(placedAsset.x) || 0.5, y: Number(placedAsset.y) || 0.5, width: Number(placedAsset.width) || 0.16, height: Number(placedAsset.height) || 0.19 };
+          const directionX = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0;
+          const directionY = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0;
+          const resize = (pointerEvent) => {
+            const dx = (pointerEvent.clientX - startX) / bounds.width;
+            const dy = (pointerEvent.clientY - startY) / bounds.height;
+            const width = Math.max(0.04, Math.min(0.9, initial.width + directionX * dx));
+            const height = Math.max(0.04, Math.min(0.9, initial.height + directionY * dy));
+            const x = Math.max(0.03, Math.min(0.97, initial.x + (directionX ? dx / 2 : 0)));
+            const y = Math.max(0.03, Math.min(0.97, initial.y + (directionY ? dy / 2 : 0)));
+            object.style.width = `${width * 100}%`;
+            object.style.height = `${height * 100}%`;
+            object.style.left = `${x * 100}%`;
+            object.style.top = `${y * 100}%`;
+          };
+          const finishResize = (pointerEvent) => {
+            resize(pointerEvent);
+            resizeHandle.removeEventListener('pointermove', resize);
+            resizeHandle.removeEventListener('pointerup', finishResize);
+            const dx = (pointerEvent.clientX - startX) / bounds.width;
+            const dy = (pointerEvent.clientY - startY) / bounds.height;
+            socket.emit('update-board-asset', {
+              assetId: placedAsset.id,
+              action: 'resize',
+              x: initial.x + (directionX ? dx / 2 : 0),
+              y: initial.y + (directionY ? dy / 2 : 0),
+              width: initial.width + directionX * dx,
+              height: initial.height + directionY * dy
+            });
+          };
+          resizeHandle.addEventListener('pointermove', resize);
+          resizeHandle.addEventListener('pointerup', finishResize);
+        });
+        object.appendChild(resizeHandle);
+      });
+    }
+    elements.boardAssets.appendChild(object);
   });
 
   const displayOrder = [...state.boardAssets].reverse();
   let activeGroupId = null;
   displayOrder.forEach((placedAsset, reversedIndex) => {
-    const layerIndex = state.boardAssets.length - reversedIndex - 1;
     const asset = state.assets.find((item) => item.key === placedAsset.key);
-    const groupIndexes = placedAsset.groupId
-      ? state.boardAssets.map((item, index) => item.groupId === placedAsset.groupId ? index : -1).filter((index) => index >= 0)
-      : [layerIndex];
-    const atFront = Math.max(...groupIndexes) === state.boardAssets.length - 1;
-    const atBack = Math.min(...groupIndexes) === 0;
     if (placedAsset.groupId !== activeGroupId) {
       activeGroupId = placedAsset.groupId || null;
       if (activeGroupId) {
         const groupAssets = state.boardAssets.filter((asset) => asset.groupId === activeGroupId);
         const groupRow = document.createElement('li');
         groupRow.className = 'layer-group-row';
+        groupRow.dataset.groupId = activeGroupId;
+        const groupMarker = document.createElement('span');
+        groupMarker.className = 'layer-group-marker';
+        groupMarker.textContent = '▾';
         const groupName = document.createElement('strong');
         groupName.className = 'layer-group-name';
         groupName.textContent = placedAsset.groupName || 'グループ';
-        groupRow.appendChild(groupName);
+        const groupCount = document.createElement('small');
+        groupCount.className = 'layer-group-count';
+        groupCount.textContent = String(groupAssets.length);
+        groupRow.append(groupMarker, groupName, groupCount);
         if (state.currentRole === 'gm') {
           const controls = document.createElement('div');
           controls.className = 'layer-controls';
@@ -483,9 +555,9 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       }
     }
     const row = document.createElement('li');
-    row.className = `layer-row${placedAsset.locked ? ' is-locked' : ''}`;
+    row.className = `layer-row${placedAsset.groupId ? ' is-grouped' : ''}${placedAsset.locked ? ' is-locked' : ''}`;
     row.dataset.assetId = placedAsset.id;
-    row.draggable = state.currentRole === 'gm' && !placedAsset.locked && !placedAsset.groupId;
+    row.draggable = state.currentRole === 'gm' && !placedAsset.locked;
     if (state.currentRole === 'gm') {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -508,17 +580,6 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     if (state.currentRole === 'gm') {
       const controls = document.createElement('div');
       controls.className = 'layer-controls';
-      [['forward', '↑', atFront, '前面へ'], ['backward', '↓', atBack, '背面へ']].forEach(([action, label, disabled, title]) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.layerAction = action;
-        button.dataset.assetId = placedAsset.id;
-        button.textContent = label;
-        button.title = title;
-        button.setAttribute('aria-label', title);
-        button.disabled = disabled;
-        controls.appendChild(button);
-      });
       const lockButton = document.createElement('button');
       lockButton.type = 'button';
       lockButton.className = `layer-lock${placedAsset.locked ? ' is-locked' : ''}`;
@@ -547,6 +608,36 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     }
     elements.layerList.appendChild(row);
   });
+}
+
+function editLayerLabel(labelElement, target) {
+  if (state.currentRole !== 'gm' || !labelElement || labelElement.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.className = 'layer-inline-edit';
+  input.maxLength = 40;
+  input.value = labelElement.textContent.trim();
+  labelElement.replaceWith(input);
+  input.focus();
+  input.select();
+  let completed = false;
+  const finish = (save) => {
+    if (completed) return;
+    completed = true;
+    const name = input.value.trim();
+    if (!save || !name) { renderBoardAssets(); return; }
+    socket.emit('update-board-asset', { ...target, action: 'rename', name }, (result) => {
+      if (!result?.ok) {
+        if (elements.status) elements.status.textContent = result?.error || '名前を変更できませんでした';
+        return;
+      }
+      renderBoardAssets(result.boardAssets);
+    });
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true), { once: true });
 }
 
 async function loadAssets() {
@@ -919,6 +1010,16 @@ if (elements.assetList) {
 }
 
 if (elements.layerList) {
+  elements.layerList.addEventListener('dblclick', (event) => {
+    if (state.currentRole !== 'gm' || event.target.closest('button, input')) return;
+    const groupName = event.target.closest('.layer-group-name');
+    if (groupName) {
+      editLayerLabel(groupName, { groupId: groupName.closest('.layer-group-row')?.dataset.groupId });
+      return;
+    }
+    const layerName = event.target.closest('.layer-name');
+    if (layerName) editLayerLabel(layerName, { assetId: layerName.closest('.layer-row')?.dataset.assetId });
+  });
   elements.layerList.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-layer-action]');
     if (!button || state.currentRole !== 'gm') return;
@@ -935,6 +1036,7 @@ if (elements.layerList) {
     if (checkbox.checked) state.selectedLayerIds.add(checkbox.dataset.assetId);
     else state.selectedLayerIds.delete(checkbox.dataset.assetId);
     if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+    if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
   });
   elements.layerList.addEventListener('dragstart', (event) => {
     const row = event.target.closest('.layer-row[draggable="true"]');
@@ -968,6 +1070,20 @@ if (elements.layerList) {
     renderBoardAssets();
     socket.emit('update-board-asset', { assetId: draggedId, action: 'reorder', order: visibleOrder.map((asset) => asset.id) }, (result) => {
       if (!result?.ok && elements.status) elements.status.textContent = result?.error || 'レイヤーを並べ替えられませんでした';
+    });
+  });
+}
+
+if (elements.layerArrangeTools) {
+  elements.layerArrangeTools.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-layer-batch]');
+    if (!button || state.currentRole !== 'gm' || state.selectedLayerIds.size < 2) return;
+    socket.emit('update-board-asset', { action: button.dataset.layerBatch, assetIds: [...state.selectedLayerIds] }, (result) => {
+      if (!result?.ok) {
+        if (elements.status) elements.status.textContent = result?.error || 'レイヤーを整列できませんでした';
+        return;
+      }
+      renderBoardAssets(result.boardAssets);
     });
   });
 }
