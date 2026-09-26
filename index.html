@@ -28,7 +28,9 @@
       <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
       <div class="room-grid">
         <main class="play-area" aria-label="プレイエリア">
-          <div id="boardAssets" class="board-assets" aria-label="配置された画像"></div>
+          <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
+          <div id="characterBoardAssets" class="board-assets character-board-assets" aria-label="配置されたキャラクター"></div>
+          <div id="boardBgmPlayers" class="board-bgm-players" aria-label="盤面BGM"></div>
           <div class="play-area-tools">
             <div class="play-area-tabs" role="tablist" aria-label="プレイエリア">
               <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
@@ -44,6 +46,9 @@
             <h3>レイヤー</h3>
             <form id="layerGroupForm" class="layer-group-form" hidden><input id="layerGroupName" maxlength="40" placeholder="グループ名"><button type="submit">選択レイヤーをグループ化</button></form>
             <div id="layerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="align-selected">位置を揃える</button><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
+            <h4 class="layer-subheading">キャラクター</h4>
+            <ul id="characterLayerList"></ul>
+            <h4 class="layer-subheading">素材</h4>
             <ul id="layerList"></ul>
           </section>
         </main>
