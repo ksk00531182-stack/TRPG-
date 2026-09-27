@@ -55,14 +55,22 @@ const elements = {
   characterBoardAssets: $('#characterBoardAssets'),
   layerBox: $('#layerBox'),
   layerBoxHandle: $('#layerBox h3'),
+  characterLayerBox: $('#characterLayerBox'),
+  characterLayerBoxHandle: $('#characterLayerBox h3'),
+  bgmLayerBox: $('#bgmLayerBox'),
+  bgmLayerBoxHandle: $('#bgmLayerBox h3'),
   layerList: $('#layerList'),
   characterLayerList: $('#characterLayerList'),
   bgmLayerList: $('#bgmLayerList'),
   layerGroupForm: $('#layerGroupForm'),
   layerGroupName: $('#layerGroupName'),
   layerArrangeTools: $('#layerArrangeTools'),
+  characterLayerGroupForm: $('#characterLayerGroupForm'),
+  characterLayerGroupName: $('#characterLayerGroupName'),
+  characterLayerArrangeTools: $('#characterLayerArrangeTools'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
-  playAreaTabs: document.querySelectorAll('.play-area-tab'),
+  playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
+  layerBoxToggle: $('#layerBoxToggle'),
   copyLink: $('#copyLink')
 };
 
@@ -75,8 +83,10 @@ const state = {
   assets: [],
   boardAssets: [],
   bgmPlayers: new Map(),
+  collapsedGroupIds: new Set(),
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
+  showLayerBoxes: true,
   playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
@@ -368,15 +378,10 @@ function renderAssets(assets) {
       placeButton.appendChild(img);
       article.appendChild(placeButton);
     } else {
-      const link = document.createElement('a');
-      link.href = asset.url || '#';
-      link.target = '_blank';
-      link.rel = 'noreferrer';
       const audioSpan = document.createElement('span');
       audioSpan.className = 'asset-audio';
       audioSpan.textContent = '♫';
-      link.appendChild(audioSpan);
-      article.appendChild(link);
+      article.appendChild(audioSpan);
       const placeButton = document.createElement('button');
       placeButton.type = 'button';
       placeButton.className = 'asset-place asset-audio-place';
@@ -455,14 +460,20 @@ function stopBgm(player) {
   player.audio.currentTime = 0;
 }
 
-function playBgm(player, startedAt = Date.now()) {
+function pauseBgm(player) {
+  if (!player) return;
+  player.generation += 1;
+  player.audio.pause();
+}
+
+function playBgm(player, startedAt = Date.now(), offset = 0) {
   const { audio } = player;
   if (!audio.paused) return;
   const generation = player.generation;
   const start = () => {
     if (!audio.paused || generation !== player.generation) return;
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
-      audio.currentTime = ((Date.now() - startedAt) / 1000) % audio.duration;
+      audio.currentTime = (offset + (Date.now() - startedAt) / 1000) % audio.duration;
     }
     audio.play().catch(() => {
       if (elements.assetStatus) elements.assetStatus.textContent = 'BGMの再生がブラウザーにブロックされました';
@@ -473,7 +484,7 @@ function playBgm(player, startedAt = Date.now()) {
 }
 
 function renderBoardAssets(boardAssets = state.boardAssets) {
-  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList) return;
+  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.bgmLayerBox) return;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   const activeBgmIds = new Set(state.boardAssets.filter((asset) => asset.category === 'bgm').map((asset) => asset.id));
   state.bgmPlayers.forEach((player, assetId) => {
@@ -492,9 +503,21 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
   elements.layerList.innerHTML = '';
   elements.characterLayerList.innerHTML = '';
   elements.bgmLayerList.innerHTML = '';
-  if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || state.boardAssets.length === 0;
-  if (elements.layerGroupForm) elements.layerGroupForm.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
-  if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = state.currentRole !== 'gm' || state.selectedLayerIds.size < 2;
+  const imageLayers = state.boardAssets.filter((asset) => asset.category !== 'bgm' && asset.category !== 'characters');
+  const characterLayers = state.boardAssets.filter((asset) => asset.category === 'characters');
+  const bgmLayers = state.boardAssets.filter((asset) => asset.category === 'bgm');
+  if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || imageLayers.length === 0;
+  elements.characterLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || characterLayers.length === 0;
+  elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || bgmLayers.length === 0;
+  const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
+  const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
+  const canOperateSelectedAssets = state.currentRole === 'gm' && selectedAssets.length >= 2 && selectedCategories.size === 1;
+  const selectedCharacters = canOperateSelectedAssets && selectedCategories.has('characters');
+  const selectedImages = canOperateSelectedAssets && !selectedCategories.has('characters') && !selectedCategories.has('bgm');
+  if (elements.layerGroupForm) elements.layerGroupForm.hidden = !selectedImages;
+  if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = !selectedImages;
+  if (elements.characterLayerGroupForm) elements.characterLayerGroupForm.hidden = !selectedCharacters;
+  if (elements.characterLayerArrangeTools) elements.characterLayerArrangeTools.hidden = !selectedCharacters;
 
   state.boardAssets.forEach((placedAsset, index) => {
     const asset = state.assets.find((item) => item.key === placedAsset.key);
@@ -508,8 +531,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     }
     if (placedAsset.category === 'bgm' && asset.type?.startsWith('audio/')) {
       const player = getBgmPlayer(placedAsset, asset);
-      if (placedAsset.bgmPlaying) playBgm(player, placedAsset.bgmStartedAt || Date.now());
-      else if (!player.audio.paused) stopBgm(player);
+      if (placedAsset.bgmPlaying) playBgm(player, placedAsset.bgmStartedAt || Date.now(), placedAsset.bgmOffset || 0);
+      else if (!player.audio.paused) pauseBgm(player);
       return;
     }
     const canEditBoardAsset = state.currentRole === 'gm'
@@ -641,13 +664,24 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     if (layerGroupId !== activeGroupId) {
       activeGroupId = layerGroupId;
       if (activeGroupId) {
+        const groupId = activeGroupId;
         const groupAssets = state.boardAssets.filter((asset) => asset.groupId === activeGroupId);
         const groupRow = document.createElement('li');
         groupRow.className = 'layer-group-row';
         groupRow.dataset.groupId = activeGroupId;
-        const groupMarker = document.createElement('span');
-        groupMarker.className = 'layer-group-marker';
-        groupMarker.textContent = '▾';
+        const groupCollapsed = state.collapsedGroupIds.has(activeGroupId);
+        const groupMarker = document.createElement('button');
+        groupMarker.type = 'button';
+        groupMarker.className = 'layer-group-toggle';
+        groupMarker.textContent = groupCollapsed ? '▸' : '▾';
+        groupMarker.title = groupCollapsed ? 'グループを展開' : 'グループを折りたたむ';
+        groupMarker.setAttribute('aria-label', groupMarker.title);
+        groupMarker.setAttribute('aria-expanded', String(!groupCollapsed));
+        groupMarker.addEventListener('click', () => {
+          if (state.collapsedGroupIds.has(groupId)) state.collapsedGroupIds.delete(groupId);
+          else state.collapsedGroupIds.add(groupId);
+          renderBoardAssets();
+        });
         const groupName = document.createElement('strong');
         groupName.className = 'layer-group-name';
         groupName.textContent = placedAsset.groupName || 'グループ';
@@ -681,6 +715,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     }
     const row = document.createElement('li');
     row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
+    row.hidden = Boolean(activeGroupId && state.collapsedGroupIds.has(activeGroupId));
     row.dataset.assetId = placedAsset.id;
     row.draggable = state.currentRole === 'gm' && !isBgmLayer && !placedAsset.locked;
     if (state.currentRole === 'gm' && !isBgmLayer) {
@@ -715,25 +750,29 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       const player = getBgmPlayer(placedAsset, asset);
       const controls = document.createElement('div');
       controls.className = 'layer-controls bgm-layer-controls';
-      const playButton = document.createElement('button');
-      playButton.type = 'button';
-      playButton.textContent = '再生';
-      playButton.title = 'BGMを再生（ループ）';
-      playButton.addEventListener('click', () => {
-        placedAsset.bgmPlaying = true;
-        placedAsset.bgmStartedAt = Date.now();
-        playBgm(player);
-        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'play' });
-      });
-      const stopButton = document.createElement('button');
-      stopButton.type = 'button';
-      stopButton.textContent = '停止';
-      stopButton.title = 'BGMを停止';
-      stopButton.addEventListener('click', () => {
-        placedAsset.bgmPlaying = false;
-        placedAsset.bgmStartedAt = 0;
-        stopBgm(player);
-        socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'stop' });
+      const toggleButton = document.createElement('button');
+      toggleButton.type = 'button';
+      toggleButton.className = 'bgm-toggle';
+      const updateToggleButton = () => {
+        toggleButton.textContent = placedAsset.bgmPlaying ? 'Ⅱ' : '▷';
+        toggleButton.title = placedAsset.bgmPlaying ? 'BGMを一時停止' : 'BGMを再生（ループ）';
+        toggleButton.setAttribute('aria-label', toggleButton.title);
+      };
+      updateToggleButton();
+      toggleButton.addEventListener('click', () => {
+        if (placedAsset.bgmPlaying) {
+          placedAsset.bgmOffset = player.audio.currentTime || placedAsset.bgmOffset || 0;
+          placedAsset.bgmPlaying = false;
+          placedAsset.bgmStartedAt = 0;
+          pauseBgm(player);
+          socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'pause', currentTime: placedAsset.bgmOffset });
+        } else {
+          placedAsset.bgmPlaying = true;
+          placedAsset.bgmStartedAt = Date.now();
+          playBgm(player, placedAsset.bgmStartedAt, placedAsset.bgmOffset || 0);
+          socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'play', currentTime: placedAsset.bgmOffset || 0 });
+        }
+        updateToggleButton();
       });
       const volumeLabel = document.createElement('label');
       volumeLabel.className = 'bgm-layer-volume';
@@ -747,7 +786,14 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       volumeInput.setAttribute('aria-label', `${name.textContent}の音量`);
       volumeInput.addEventListener('input', () => { player.audio.volume = Number(volumeInput.value); });
       volumeLabel.appendChild(volumeInput);
-      controls.append(playButton, stopButton, volumeLabel);
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'layer-delete';
+      deleteButton.dataset.boardAssetDelete = placedAsset.id;
+      deleteButton.textContent = '削除';
+      deleteButton.title = '配置を盤面から削除';
+      deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
+      controls.append(toggleButton, volumeLabel, deleteButton);
       row.appendChild(controls);
     } else if (state.currentRole === 'gm' && !isBgmLayer) {
       const controls = document.createElement('div');
@@ -771,6 +817,14 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       visibilityButton.title = placedAsset.visible === false ? '表示する' : '非表示にする';
       visibilityButton.setAttribute('aria-label', visibilityButton.title);
       controls.appendChild(visibilityButton);
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'layer-delete';
+      deleteButton.dataset.boardAssetDelete = placedAsset.id;
+      deleteButton.textContent = '削除';
+      deleteButton.title = '配置を盤面から削除';
+      deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
+      controls.appendChild(deleteButton);
       row.appendChild(controls);
     } else if (!isBgmLayer) {
       const status = document.createElement('small');
@@ -877,6 +931,13 @@ async function uploadAssets() {
   }
 }
 
+function updateLayerBoxToggleButton() {
+  if (!elements.layerBoxToggle) return;
+  elements.layerBoxToggle.hidden = state.currentRole !== 'gm';
+  elements.layerBoxToggle.textContent = state.showLayerBoxes ? 'レイヤーを非表示' : 'レイヤーを表示';
+  elements.layerBoxToggle.setAttribute('aria-pressed', String(state.showLayerBoxes));
+}
+
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
   state.selectedLayerIds.clear();
@@ -886,6 +947,7 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  updateLayerBoxToggleButton();
   if (elements.assetCategory) {
     if (role === 'pc') elements.assetCategory.value = 'characters';
     const categoryLabel = elements.assetCategory.closest('.asset-genre');
@@ -1118,6 +1180,12 @@ elements.playAreaTabs?.forEach((tab) => {
   });
 });
 
+elements.layerBoxToggle?.addEventListener('click', () => {
+  state.showLayerBoxes = !state.showLayerBoxes;
+  updateLayerBoxToggleButton();
+  renderBoardAssets();
+});
+
 elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
 // Socket Events
@@ -1140,18 +1208,20 @@ socket.on('typing', ({ name, isTyping }) => {
 socket.on('asset-added', loadAssets);
 socket.on('asset-deleted', loadAssets);
 socket.on('character-assigned', loadAssets);
-socket.on('board-bgm-control', ({ assetId, action, startedAt }) => {
+socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime }) => {
   const placedAsset = state.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
   if (!placedAsset) return;
   placedAsset.bgmPlaying = action === 'play';
   placedAsset.bgmStartedAt = action === 'play' ? startedAt : 0;
-  if (action === 'stop') {
+  if (Number.isFinite(currentTime)) placedAsset.bgmOffset = Math.max(0, currentTime);
+  if (action === 'pause') {
     const player = state.bgmPlayers.get(assetId);
-    if (player) stopBgm(player);
+    if (player) pauseBgm(player);
+    renderBoardAssets();
     return;
   }
   const asset = state.assets.find((item) => item.key === placedAsset.key);
-  if (asset?.url) playBgm(getBgmPlayer(placedAsset, asset), startedAt);
+  if (asset?.url) renderBoardAssets();
   else loadAssets();
 });
 socket.on('board-assets', (boardAssets) => {
@@ -1214,8 +1284,9 @@ if (elements.assetList) {
   });
 }
 
-if (elements.layerBox) {
-  elements.layerBox.addEventListener('dblclick', (event) => {
+const layerBoxes = [elements.layerBox, elements.characterLayerBox].filter(Boolean);
+layerBoxes.forEach((layerBox) => {
+  layerBox.addEventListener('dblclick', (event) => {
     if (state.currentRole !== 'gm' || event.target.closest('button, input')) return;
     const groupName = event.target.closest('.layer-group-name');
     if (groupName) {
@@ -1225,7 +1296,14 @@ if (elements.layerBox) {
     const layerName = event.target.closest('.layer-name');
     if (layerName) editLayerLabel(layerName, { assetId: layerName.closest('.layer-row')?.dataset.assetId });
   });
-  elements.layerBox.addEventListener('click', (event) => {
+  layerBox.addEventListener('click', (event) => {
+    const deleteButton = event.target.closest('button[data-board-asset-delete]');
+    if (deleteButton) {
+      socket.emit('remove-board-asset', { assetId: deleteButton.dataset.boardAssetDelete }, (result) => {
+        if (!result?.ok && elements.status) elements.status.textContent = result?.error || '盤面から削除できませんでした';
+      });
+      return;
+    }
     const button = event.target.closest('button[data-layer-action]');
     if (!button || state.currentRole !== 'gm') return;
     const payload = { assetId: button.dataset.assetId, groupId: button.dataset.groupId, action: button.dataset.layerAction };
@@ -1235,7 +1313,7 @@ if (elements.layerBox) {
       if (!result?.ok && elements.status) elements.status.textContent = result?.error || 'レイヤーを更新できませんでした';
     });
   });
-  elements.layerBox.addEventListener('change', (event) => {
+  layerBox.addEventListener('change', (event) => {
     const checkbox = event.target.closest('.layer-select');
     if (!checkbox) return;
     if (checkbox.checked) {
@@ -1247,23 +1325,23 @@ if (elements.layerBox) {
     }
     renderBoardAssets();
   });
-  elements.layerBox.addEventListener('dragstart', (event) => {
+  layerBox.addEventListener('dragstart', (event) => {
     const row = event.target.closest('.layer-row[draggable="true"]');
     if (!row || event.target.closest('button, input')) { event.preventDefault(); return; }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', row.dataset.assetId);
     row.classList.add('is-dragging');
   });
-  elements.layerBox.addEventListener('dragend', (event) => {
+  layerBox.addEventListener('dragend', (event) => {
     event.target.closest('.layer-row')?.classList.remove('is-dragging');
-    elements.layerBox.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
+    layerBox.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
   });
-  elements.layerBox.addEventListener('dragover', (event) => {
+  layerBox.addEventListener('dragover', (event) => {
     if (state.currentRole !== 'gm' || !event.target.closest('.layer-row')) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   });
-  elements.layerBox.addEventListener('drop', (event) => {
+  layerBox.addEventListener('drop', (event) => {
     if (state.currentRole !== 'gm') return;
     const targetRow = event.target.closest('.layer-row');
     const draggedId = event.dataTransfer.getData('text/plain');
@@ -1282,42 +1360,62 @@ if (elements.layerBox) {
       if (!result?.ok && elements.status) elements.status.textContent = result?.error || 'レイヤーを並べ替えられませんでした';
     });
   });
-}
+});
 
-
-if (elements.layerBoxHandle && elements.layerBox && elements.playArea) {
-  elements.layerBoxHandle.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    elements.layerBoxHandle.setPointerCapture(event.pointerId);
-    const bounds = elements.playArea.getBoundingClientRect();
-    const box = elements.layerBox.getBoundingClientRect();
-    const offsetX = event.clientX - box.left;
-    const offsetY = event.clientY - box.top;
-    elements.layerBox.style.left = `${box.left - bounds.left}px`;
-    elements.layerBox.style.top = `${box.top - bounds.top}px`;
-    elements.layerBox.style.right = 'auto';
-    elements.layerBox.style.bottom = 'auto';
-    const move = (pointerEvent) => {
-      const maxLeft = Math.max(0, bounds.width - box.width);
-      const maxTop = Math.max(0, bounds.height - box.height);
-      const left = Math.max(0, Math.min(maxLeft, pointerEvent.clientX - bounds.left - offsetX));
-      const top = Math.max(0, Math.min(maxTop, pointerEvent.clientY - bounds.top - offsetY));
-      elements.layerBox.style.left = `${left}px`;
-      elements.layerBox.style.top = `${top}px`;
-    };
-    const stop = () => {
-      elements.layerBoxHandle.removeEventListener('pointermove', move);
-      elements.layerBoxHandle.removeEventListener('pointerup', stop);
-      elements.layerBoxHandle.removeEventListener('pointercancel', stop);
-    };
-    elements.layerBoxHandle.addEventListener('pointermove', move);
-    elements.layerBoxHandle.addEventListener('pointerup', stop);
-    elements.layerBoxHandle.addEventListener('pointercancel', stop);
+if (elements.bgmLayerBox) {
+  elements.bgmLayerBox.addEventListener('dblclick', (event) => {
+    if (state.currentRole !== 'gm' || event.target.closest('button, input')) return;
+    const layerName = event.target.closest('.layer-name');
+    if (layerName) editLayerLabel(layerName, { assetId: layerName.closest('.layer-row')?.dataset.assetId });
+  });
+  elements.bgmLayerBox.addEventListener('click', (event) => {
+    const deleteButton = event.target.closest('button[data-board-asset-delete]');
+    if (!deleteButton) return;
+    socket.emit('remove-board-asset', { assetId: deleteButton.dataset.boardAssetDelete }, (result) => {
+      if (!result?.ok && elements.status) elements.status.textContent = result?.error || '盤面から削除できませんでした';
+    });
   });
 }
-if (elements.layerArrangeTools) {
-  elements.layerArrangeTools.addEventListener('click', (event) => {
+
+
+const enableLayerBoxDragging = (box, handle) => {
+  if (!box || !handle || !elements.playArea) return;
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const bounds = elements.playArea.getBoundingClientRect();
+    const boxBounds = box.getBoundingClientRect();
+    const offsetX = event.clientX - boxBounds.left;
+    const offsetY = event.clientY - boxBounds.top;
+    box.style.left = `${boxBounds.left - bounds.left}px`;
+    box.style.top = `${boxBounds.top - bounds.top}px`;
+    box.style.right = 'auto';
+    box.style.bottom = 'auto';
+    const move = (pointerEvent) => {
+      const maxLeft = Math.max(0, bounds.width - boxBounds.width);
+      const maxTop = Math.max(0, bounds.height - boxBounds.height);
+      const left = Math.max(0, Math.min(maxLeft, pointerEvent.clientX - bounds.left - offsetX));
+      const top = Math.max(0, Math.min(maxTop, pointerEvent.clientY - bounds.top - offsetY));
+      box.style.left = `${left}px`;
+      box.style.top = `${top}px`;
+    };
+    const stop = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', stop);
+      handle.removeEventListener('pointercancel', stop);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+  });
+};
+enableLayerBoxDragging(elements.layerBox, elements.layerBoxHandle);
+enableLayerBoxDragging(elements.characterLayerBox, elements.characterLayerBoxHandle);
+enableLayerBoxDragging(elements.bgmLayerBox, elements.bgmLayerBoxHandle);
+const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLayerArrangeTools].filter(Boolean);
+layerArrangeToolsets.forEach((tools) => {
+  tools.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-layer-batch]');
     if (!button || state.currentRole !== 'gm' || state.selectedLayerIds.size < 2) return;
     socket.emit('update-board-asset', { action: button.dataset.layerBatch, assetIds: [...state.selectedLayerIds] }, (result) => {
@@ -1328,18 +1426,22 @@ if (elements.layerArrangeTools) {
       renderBoardAssets(result.boardAssets);
     });
   });
-}
+});
 
 elements.playArea?.addEventListener('click', (event) => {
-  if (event.target.closest('.board-object, .play-area-tools, .layer-box')) return;
+  if (event.target.closest('.board-object, .play-area-tools, .layer-box, .character-layer-box, .bgm-layer-box')) return;
   if (!state.selectedLayerIds.size && !state.selectedBoardAssetId) return;
   state.selectedLayerIds.clear();
   state.selectedBoardAssetId = '';
   renderBoardAssets();
 });
 
-if (elements.layerGroupForm) {
-  elements.layerGroupForm.addEventListener('submit', (event) => {
+const layerGroupForms = [
+  [elements.layerGroupForm, elements.layerGroupName],
+  [elements.characterLayerGroupForm, elements.characterLayerGroupName]
+];
+layerGroupForms.forEach(([form, nameInput]) => {
+  form?.addEventListener('submit', (event) => {
     event.preventDefault();
     if (state.currentRole !== 'gm') return;
     if (state.selectedLayerIds.size < 2) {
@@ -1354,17 +1456,17 @@ if (elements.layerGroupForm) {
     const existingNames = new Set(state.boardAssets.map((asset) => asset.groupName).filter(Boolean));
     let groupNumber = 1;
     while (existingNames.has(`グループ${groupNumber}`)) groupNumber += 1;
-    const groupName = elements.layerGroupName?.value.trim() || `グループ${groupNumber}`;
+    const groupName = nameInput?.value.trim() || `グループ${groupNumber}`;
     socket.emit('update-board-asset', { action: 'group', assetIds: [...state.selectedLayerIds], groupName }, (result) => {
       if (!result?.ok) {
         if (elements.status) elements.status.textContent = result?.error || 'グループを作成できませんでした';
         return;
       }
       state.selectedLayerIds.clear();
-      if (elements.layerGroupName) elements.layerGroupName.value = '';
+      if (nameInput) nameInput.value = '';
       renderBoardAssets(result.boardAssets);
     });
   });
-}
+});
 
 renderRoomList();

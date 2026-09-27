@@ -341,6 +341,7 @@ io.on('connection', (socket) => {
       assignedPlayerId: asset.category === 'characters' ? asset.assignedPlayerId || '' : '',
       bgmPlaying: false,
       bgmStartedAt: 0,
+      bgmOffset: 0,
       x: isBackground ? 0.5 : 0.5 + ((placementIndex % 5) - 2) * 0.08,
       y: isBackground ? 0.5 : 0.5 + ((Math.floor(placementIndex / 5) % 5) - 2) * 0.08,
       width: isBackground ? 0.9 : 0.16,
@@ -355,18 +356,20 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, boardAsset });
   });
 
-  socket.on('control-board-bgm', ({ assetId, action } = {}, acknowledge) => {
+  socket.on('control-board-bgm', ({ assetId, action, currentTime } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const boardAsset = room?.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
-    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'stop'].includes(action)) {
+    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'pause'].includes(action)) {
       acknowledge?.({ ok: false, error: 'BGMを操作できません。' });
       return;
     }
+    const offset = Number(currentTime);
+    if (Number.isFinite(offset)) boardAsset.bgmOffset = Math.max(0, offset);
     boardAsset.bgmPlaying = action === 'play';
     boardAsset.bgmStartedAt = action === 'play' ? Date.now() : 0;
     touchRoom(room);
-    const playback = { assetId, action, startedAt: boardAsset.bgmStartedAt };
+    const playback = { assetId, action, startedAt: boardAsset.bgmStartedAt, currentTime: boardAsset.bgmOffset || 0 };
     socket.to(`room:${id}`).emit('board-bgm-control', playback);
     acknowledge?.({ ok: true, ...playback });
   });
@@ -392,16 +395,45 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, boardAssets: room.boardAssets });
   });
 
+  socket.on('remove-board-asset', ({ assetId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: 'GMのみ盤面から削除できます。' });
+      return;
+    }
+    const assetIndex = room.boardAssets.findIndex((asset) => asset.id === assetId);
+    if (assetIndex < 0) {
+      acknowledge?.({ ok: false, error: '削除するレイヤーが見つかりません。' });
+      return;
+    }
+    const [{ groupId }] = room.boardAssets.splice(assetIndex, 1);
+    if (groupId) {
+      const remainingGroupAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
+      if (remainingGroupAssets.length === 1) {
+        remainingGroupAssets.forEach((asset) => {
+          delete asset.groupId;
+          delete asset.groupName;
+          delete asset.groupVisible;
+        });
+      }
+    }
+    touchRoom(room);
+    io.to(`room:${id}`).emit('board-assets', room.boardAssets);
+    acknowledge?.({ ok: true, boardAssets: room.boardAssets });
+  });
+
   socket.on('update-board-asset', ({ assetId, action, x, y, width, height, order, assetIds, groupId, groupName, name: rawName, visible, locked } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const member = socket.data.member;
     if (!room || !member) { acknowledge?.({ ok: false, error: 'ルームに参加していません。' }); return; }
 
-    if (['align-selected', 'match-size-selected', 'stack-selected'].includes(action)) {
+    if (['match-size-selected', 'stack-selected'].includes(action)) {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
       const selectedAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
-      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset || asset.category === 'bgm')) {
+      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset || asset.category === 'bgm')
+        || new Set(selectedAssets.map((asset) => asset.category)).size > 1) {
         acknowledge?.({ ok: false, error: 'GMとして2つ以上のレイヤーを選択してください。' });
         return;
       }
@@ -411,7 +443,7 @@ io.on('connection', (socket) => {
       }
       const reference = selectedAssets[0];
       selectedAssets.slice(1).forEach((asset) => {
-        if (action === 'align-selected' || action === 'stack-selected') {
+        if (action === 'stack-selected') {
           asset.x = reference.x;
           asset.y = reference.y;
         }
