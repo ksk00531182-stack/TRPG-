@@ -28,12 +28,14 @@
       <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
       <div class="room-grid">
         <main class="play-area" aria-label="プレイエリア">
-          <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
-          <div id="characterBoardAssets" class="board-assets character-board-assets" aria-label="配置されたキャラクター"></div>
+          <div class="board-viewport">
+            <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
+            <div id="characterBoardAssets" class="board-assets character-board-assets" aria-label="配置されたキャラクター"></div>
+          </div>
           <div class="play-area-tools">
             <div class="play-area-tabs" role="tablist" aria-label="プレイエリア">
-              <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
               <button id="layerBoxToggle" class="play-area-tab layer-box-toggle" type="button" aria-pressed="true" hidden>レイヤーを非表示</button>
+              <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
             </div>
             <section id="playAreaAssetPanel" class="assets" aria-label="プレイエリア素材" hidden>
               <div class="assets-heading"><span id="assetStatus"></span></div>

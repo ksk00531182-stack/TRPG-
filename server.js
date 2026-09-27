@@ -321,13 +321,13 @@ io.on('connection', (socket) => {
     const room = id && rooms.get(id);
     const assetKey = typeof key === 'string' && key.startsWith(`rooms/${id}/`) ? key : '';
     const asset = assetKey && room?.assets.get(assetKey);
-    if (socket.data.member?.role === 'pc' && asset?.category === 'npcs') {
-      acknowledge?.({ ok: false, error: 'NPC素材はGMのみ配置できます。' });
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: '盤面への素材配置はGMのみ行えます。' });
       return;
     }
     const isImage = asset?.type?.startsWith('image/');
     const isBgm = asset?.category === 'bgm' && asset.type?.startsWith('audio/');
-    if (!room || !socket.data.member || !asset || (!isImage && !isBgm)) {
+    if (!asset || (!isImage && !isBgm)) {
       acknowledge?.({ ok: false, error: '配置できる画像またはBGM素材が見つかりません。' });
       return;
     }
@@ -456,10 +456,11 @@ io.on('connection', (socket) => {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
       const name = cleanText(groupName, 40);
       const selectedLayerAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
+      const selectedCategories = new Set(selectedLayerAssets.filter(Boolean).map((asset) => asset.category));
       if (member.role !== 'gm' || selectedIds.length < 2 || !name || selectedLayerAssets.some((asset) => !asset)
-        || selectedLayerAssets.some((asset) => asset.category === 'bgm')
-        || new Set(selectedLayerAssets.map((asset) => asset.category)).size > 1) {
-        acknowledge?.({ ok: false, error: 'グループ名と2つ以上のレイヤーを選択してください。' });
+        || selectedCategories.has('bgm')
+        || (selectedCategories.has('characters') && selectedCategories.size > 1)) {
+        acknowledge?.({ ok: false, error: '素材カテゴリーを確認してください。BGMやキャラクターと他の素材はグループ化できません。' });
         return;
       }
       const selectedSet = new Set(selectedIds);
