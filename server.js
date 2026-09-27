@@ -33,6 +33,26 @@ const trpgSystems = Object.freeze({
   coc: Object.freeze({ id: 'coc', name: 'クトゥルフ神話TRPG' }),
   emoklore: Object.freeze({ id: 'emoklore', name: 'エモクロアTRPG' })
 });
+const characterSheetFields = Object.freeze({
+  coc: Object.freeze([
+    ['characterName', '探索者名', 'text'], ['age', '年齢', 'number'], ['occupation', '職業', 'text'],
+    ['initiative', 'イニシアチブ', 'number'],
+    ['str', 'STR', 'number'], ['con', 'CON', 'number'], ['pow', 'POW', 'number'], ['dex', 'DEX', 'number'],
+    ['app', 'APP', 'number'], ['siz', 'SIZ', 'number'], ['int', 'INT', 'number'], ['edu', 'EDU', 'number'], ['db', 'DB', 'text'],
+    ['hp', 'HP', 'number'], ['mp', 'MP', 'number'], ['san', 'SAN', 'number'], ['luck', '幸運', 'number'],
+    ['idea', 'アイデア', 'number'], ['knowledge', '知識', 'number'],
+    ['skills', '技能（技能名・成功率）', 'textarea', '例: 目星 25\n聞き耳 25\n図書館 25'],
+    ['rollSkills', 'ダイスロール表示設定', 'textarea'], ['memo', 'メモ', 'textarea']
+  ]),
+  emoklore: Object.freeze([
+    ['characterName', 'キャラクター名', 'text'], ['age', '年齢', 'number'], ['occupation', '職業', 'text'],
+    ['body', '身体', 'number'], ['dexterity', '器用', 'number'], ['mind', '精神', 'number'], ['senses', '五感', 'number'],
+    ['intelligence', '知力', 'number'], ['charm', '魅力', 'number'], ['society', '社会', 'number'], ['fortune', '運勢', 'number'],
+    ['resonance', '共鳴', 'number'], ['resonanceEmotion', '共鳴感情', 'text'],
+    ['skills', '技能（技能名・判定値）', 'textarea', '技能名と判定値を1行ずつ入力'],
+    ['rollSkills', 'ダイスロール表示設定', 'textarea'], ['memo', 'メモ', 'textarea']
+  ])
+});
 
 function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
 function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
@@ -48,6 +68,46 @@ function parseDiceNotation(value) {
   return { count, sides, modifier, expression: normalized };
 }
 
+function canManageBoardAssets(member, assets) {
+  if (member?.role === 'gm') return true;
+  return member?.role === 'pc' && Boolean(member.playerId) && assets.length > 0
+    && assets.every((asset) => asset.category === 'characters' && asset.assignedPlayerId === member.playerId);
+}
+
+function createEmptyCharacterSheet(systemId) {
+  return Object.fromEntries(characterSheetFields[systemId].map(([key]) => [key, '']));
+}
+
+function normalizeCharacterSheet(systemId, values) {
+  const result = {};
+  characterSheetFields[systemId].forEach(([key, , type]) => {
+    const value = typeof values?.[key] === 'string' ? values[key] : '';
+    if (type === 'number' && value.trim() && (!Number.isFinite(Number(value)) || Math.abs(Number(value)) > 100000)) {
+      result[key] = '';
+    } else {
+      result[key] = type === 'textarea' ? value.slice(0, 5000) : cleanText(value, 160);
+    }
+  });
+  return result;
+}
+
+function parseCharacterSkillLine(line) {
+  const match = typeof line === 'string' && line.normalize('NFKC').trim().match(/^(.+?)\s*[:：]?\s*(\d{1,3})$/);
+  if (!match) return null;
+  const name = cleanText(match[1], 60);
+  const target = Number(match[2]);
+  return name && target >= 0 && target <= 100 ? { name, target } : null;
+}
+
+function getSkillRollOutcome(roll, target) {
+  if (roll === 1) return 'クリティカル';
+  if (target >= 50 ? roll === 100 : roll >= 96) return 'ファンブル';
+  if (roll <= Math.floor(target / 5)) return 'エクストリーム成功';
+  if (roll <= Math.floor(target / 2)) return 'ハード成功';
+  if (roll <= target) return 'レギュラー成功';
+  return '失敗';
+}
+
 function createRoomId() {
   let id;
   do {
@@ -59,7 +119,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -69,6 +129,7 @@ function persistRooms() {
     id,
     messages: room.messages,
     players: [...room.players.entries()],
+    characterSheets: [...room.characterSheets.entries()],
     npcs: [...room.npcs.entries()],
     assets: [...room.assets.entries()],
     boardAssets: room.boardAssets,
@@ -95,6 +156,7 @@ function loadPersistedRooms() {
         messages: Array.isArray(savedRoom.messages) ? savedRoom.messages : [],
         members: new Map(),
         players: new Map(savedRoom.players || []),
+        characterSheets: new Map(savedRoom.characterSheets || []),
         npcs: new Map(savedRoom.npcs || []),
         assets: new Map(savedRoom.assets || []),
         boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false })) : [],
@@ -268,6 +330,7 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   room.members.set(socket.id, member);
   if (member.role === 'pc') {
     room.players.set(member.playerId, { playerId: member.playerId, name: member.name });
+    if (!room.characterSheets.has(member.playerId)) room.characterSheets.set(member.playerId, createEmptyCharacterSheet(room.systemId));
     persistRooms();
   }
   const token = crypto.randomBytes(32).toString('hex');
@@ -281,6 +344,44 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
 }
 
 io.on('connection', (socket) => {
+  socket.on('get-character-sheets', (_payload, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const member = socket.data.member;
+    if (!room || !member) { acknowledge?.({ ok: false, error: 'ルームに参加していません。' }); return; }
+    const playerIds = member.role === 'gm' ? [...room.players.keys()] : [member.playerId];
+    const sheets = playerIds.map((playerId) => ({
+      playerId,
+      name: room.players.get(playerId)?.name || playerId,
+      values: room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId)
+    }));
+    acknowledge?.({ ok: true, systemId: room.systemId, fields: characterSheetFields[room.systemId], sheets });
+  });
+
+  socket.on('update-character-sheet', ({ playerId, values } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const member = socket.data.member;
+    if (!room || !member || typeof playerId !== 'string' || !room.players.has(playerId)) {
+      acknowledge?.({ ok: false, error: 'キャラクターシートまたは参加者を確認できません。' });
+      return;
+    }
+    if (member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+      acknowledge?.({ ok: false, error: 'このキャラクターシートを編集する権限がありません。' });
+      return;
+    }
+    const sheet = normalizeCharacterSheet(room.systemId, values);
+    room.characterSheets.set(playerId, sheet);
+    touchRoom(room);
+    const update = { playerId, values: sheet, name: room.players.get(playerId)?.name || playerId };
+    room.members.forEach((recipient) => {
+      if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
+        io.to(recipient.id).emit('character-sheet-updated', update);
+      }
+    });
+    acknowledge?.({ ok: true, ...update });
+  });
+
   socket.on('create-room', ({ systemId, roomTitle, name } = {}, acknowledge) => {
     const system = trpgSystems[systemId];
     const title = cleanText(roomTitle, 80);
@@ -398,13 +499,18 @@ io.on('connection', (socket) => {
   socket.on('remove-board-asset', ({ assetId } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
-    if (!room || socket.data.member?.role !== 'gm') {
-      acknowledge?.({ ok: false, error: 'GMのみ盤面から削除できます。' });
+    const member = socket.data.member;
+    if (!room || !member) {
+      acknowledge?.({ ok: false, error: 'ルームに参加していません。' });
       return;
     }
     const assetIndex = room.boardAssets.findIndex((asset) => asset.id === assetId);
     if (assetIndex < 0) {
       acknowledge?.({ ok: false, error: '削除するレイヤーが見つかりません。' });
+      return;
+    }
+    if (!canManageBoardAssets(member, [room.boardAssets[assetIndex]])) {
+      acknowledge?.({ ok: false, error: '担当キャラクター以外は削除できません。' });
       return;
     }
     const [{ groupId }] = room.boardAssets.splice(assetIndex, 1);
@@ -432,7 +538,8 @@ io.on('connection', (socket) => {
     if (['match-size-selected', 'stack-selected'].includes(action)) {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
       const selectedAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
-      if (member.role !== 'gm' || selectedAssets.length < 2 || selectedAssets.some((asset) => !asset || asset.category === 'bgm')
+      if (selectedAssets.length < 2 || selectedAssets.some((asset) => !asset || asset.category === 'bgm')
+        || !canManageBoardAssets(member, selectedAssets)
         || new Set(selectedAssets.map((asset) => asset.category)).size > 1) {
         acknowledge?.({ ok: false, error: 'GMとして2つ以上のレイヤーを選択してください。' });
         return;
@@ -457,7 +564,8 @@ io.on('connection', (socket) => {
       const name = cleanText(groupName, 40);
       const selectedLayerAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
       const selectedCategories = new Set(selectedLayerAssets.filter(Boolean).map((asset) => asset.category));
-      if (member.role !== 'gm' || selectedIds.length < 2 || !name || selectedLayerAssets.some((asset) => !asset)
+      if (selectedIds.length < 2 || !name || selectedLayerAssets.some((asset) => !asset)
+        || !canManageBoardAssets(member, selectedLayerAssets)
         || selectedCategories.has('bgm')
         || (selectedCategories.has('characters') && selectedCategories.size > 1)) {
         acknowledge?.({ ok: false, error: '素材カテゴリーを確認してください。BGMやキャラクターと他の素材はグループ化できません。' });
@@ -478,19 +586,20 @@ io.on('connection', (socket) => {
       room.boardAssets.splice(Math.min(firstIndex, room.boardAssets.length), 0, ...selectedAssets);
     } else if (action === 'rename') {
       const name = cleanText(rawName, 40);
-      if (member.role !== 'gm' || !name) { acknowledge?.({ ok: false, error: 'GMのみ名前を変更できます。' }); return; }
+      if (!name) { acknowledge?.({ ok: false, error: '新しい名前を入力してください。' }); return; }
       if (groupId) {
         const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
-        if (!groupedAssets.length) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
+        if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'グループを編集する権限がありません。' }); return; }
         groupedAssets.forEach((asset) => { asset.groupName = name; });
       } else {
         const renamedAsset = room.boardAssets.find((asset) => asset.id === assetId);
-        if (!renamedAsset) { acknowledge?.({ ok: false, error: 'レイヤーが見つかりません。' }); return; }
+        if (!renamedAsset || !canManageBoardAssets(member, [renamedAsset])) { acknowledge?.({ ok: false, error: 'レイヤーを編集する権限がありません。' }); return; }
         renamedAsset.name = name;
       }
     } else if (action === 'ungroup') {
-      if (member.role !== 'gm' || !groupId) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
+      if (!groupId) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
+      if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'グループを編集する権限がありません。' }); return; }
       if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
       groupedAssets.forEach((asset) => {
         delete asset.groupId;
@@ -498,9 +607,10 @@ io.on('connection', (socket) => {
         delete asset.groupVisible;
       });
     } else if (action === 'toggle-group-visibility' || action === 'toggle-group-lock') {
-      if (member.role !== 'gm' || !groupId) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
+      if (!groupId) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
       if (!groupedAssets.length) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
+      if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'グループを編集する権限がありません。' }); return; }
       if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
       if (action === 'toggle-group-lock') groupedAssets.forEach((asset) => { asset.locked = Boolean(locked); });
       else groupedAssets.forEach((asset) => { asset.groupVisible = Boolean(visible); });
@@ -508,19 +618,30 @@ io.on('connection', (socket) => {
     const assetIndex = room?.boardAssets.findIndex((asset) => asset.id === assetId) ?? -1;
     if (assetIndex < 0) { acknowledge?.({ ok: false, error: 'レイヤーが見つかりません。' }); return; }
     const boardAsset = room.boardAssets[assetIndex];
-    const canEditBoardAsset = member.role === 'gm'
-      || (boardAsset.category === 'characters' && boardAsset.assignedPlayerId === member.playerId && Boolean(member.playerId));
     if (boardAsset.category === 'bgm' && ['move', 'resize', 'toggle-lock', 'toggle-visibility'].includes(action)) {
       acknowledge?.({ ok: false, error: 'BGMレイヤーではこの操作を使用できません。' });
       return;
     }
 
     if (action === 'reorder') {
-      if (member.role !== 'gm' || !Array.isArray(order)) { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
+      if (!Array.isArray(order)) { acknowledge?.({ ok: false, error: 'レイヤーの並び順が不正です。' }); return; }
       const currentIds = room.boardAssets.map((asset) => asset.id);
       if (order.length !== currentIds.length || new Set(order).size !== currentIds.length || order.some((id) => !currentIds.includes(id))) {
         acknowledge?.({ ok: false, error: 'レイヤーの並び順が不正です。' });
         return;
+      }
+      if (member.role !== 'gm') {
+        const manageableAssets = room.boardAssets.filter((asset) => canManageBoardAssets(member, [asset]));
+        const manageableIds = new Set(manageableAssets.map((asset) => asset.id));
+        const untouchedOrder = currentIds.filter((id) => !manageableIds.has(id));
+        const requestedUntouchedOrder = order.filter((id) => !manageableIds.has(id));
+        const containsMixedGroup = new Set(manageableAssets.map((asset) => asset.groupId).filter(Boolean));
+        const hasUnmanagedGroupMember = room.boardAssets.some((asset) => containsMixedGroup.has(asset.groupId) && !manageableIds.has(asset.id));
+        if (!manageableAssets.length || hasUnmanagedGroupMember
+          || untouchedOrder.some((id, index) => requestedUntouchedOrder[index] !== id)) {
+          acknowledge?.({ ok: false, error: '担当キャラクターだけ並べ替えできます。' });
+          return;
+        }
       }
       const assetsById = new Map(room.boardAssets.map((asset) => [asset.id, asset]));
       const frontToBack = [];
@@ -542,11 +663,11 @@ io.on('connection', (socket) => {
     } else if (action === 'move') {
       const nextX = Number(x);
       const nextY = Number(y);
-      if (!canEditBoardAsset) { acknowledge?.({ ok: false, error: 'このキャラクターを編集する権限がありません。' }); return; }
       if (boardAsset.locked || !Number.isFinite(nextX) || !Number.isFinite(nextY)) { acknowledge?.({ ok: false, error: 'このレイヤーは移動できません。' }); return; }
       const offsetX = nextX - boardAsset.x;
       const offsetY = nextY - boardAsset.y;
-      const movingAssets = member.role === 'gm' && boardAsset.groupId ? room.boardAssets.filter((asset) => asset.groupId === boardAsset.groupId) : [boardAsset];
+      const movingAssets = boardAsset.groupId ? room.boardAssets.filter((asset) => asset.groupId === boardAsset.groupId) : [boardAsset];
+      if (!canManageBoardAssets(member, movingAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
       if (movingAssets.some((asset) => asset.locked)) { acknowledge?.({ ok: false, error: 'グループ内にロック中のレイヤーがあります。' }); return; }
       movingAssets.forEach((asset) => {
         asset.x = Math.max(0.03, Math.min(0.97, asset.x + offsetX));
@@ -557,23 +678,25 @@ io.on('connection', (socket) => {
       const nextY = Number(y);
       const nextWidth = Number(width);
       const nextHeight = Number(height);
-      if (!canEditBoardAsset) { acknowledge?.({ ok: false, error: 'このキャラクターを編集する権限がありません。' }); return; }
+      if (!canManageBoardAssets(member, [boardAsset])) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
       if (boardAsset.locked || ![nextX, nextY, nextWidth, nextHeight].every(Number.isFinite)) { acknowledge?.({ ok: false, error: 'この画像はサイズ変更できません。' }); return; }
       boardAsset.x = Math.max(0.03, Math.min(0.97, nextX));
       boardAsset.y = Math.max(0.03, Math.min(0.97, nextY));
       boardAsset.width = Math.max(0.04, Math.min(3, nextWidth));
       boardAsset.height = Math.max(0.04, Math.min(3, nextHeight));
     } else {
-      if (member.role !== 'gm') { acknowledge?.({ ok: false, error: 'レイヤー操作はGMのみ行えます。' }); return; }
       if (action === 'toggle-lock') {
         const nextLocked = !boardAsset.locked;
         const affectedAssets = boardAsset.groupId ? room.boardAssets.filter((asset) => asset.groupId === boardAsset.groupId) : [boardAsset];
+        if (!canManageBoardAssets(member, affectedAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
         affectedAssets.forEach((asset) => { asset.locked = nextLocked; });
       } else if (action === 'toggle-visibility') {
         const nextVisible = visible === undefined ? !boardAsset.visible : Boolean(visible);
+        if (!canManageBoardAssets(member, [boardAsset])) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
         boardAsset.visible = nextVisible;
       } else if (action === 'forward' || action === 'backward') {
         const groupedAssets = boardAsset.groupId ? room.boardAssets.filter((asset) => asset.groupId === boardAsset.groupId) : [boardAsset];
+        if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
         const firstIndex = Math.min(...groupedAssets.map((asset) => room.boardAssets.indexOf(asset)));
         const reordered = room.boardAssets.filter((asset) => !groupedAssets.includes(asset));
         const insertionIndex = action === 'forward' ? Math.min(reordered.length, firstIndex + 1) : Math.max(0, firstIndex - 1);
@@ -665,7 +788,7 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
-  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false } = {}) => {
+  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false, skillName = '', skillValue, skillPlayerId = '' } = {}) => {
     const id = socket.data.roomId;
     const member = socket.data.member;
     const room = id && rooms.get(id);
@@ -673,7 +796,29 @@ io.on('connection', (socket) => {
     const diceCount = Number(count);
     const diceModifier = Number(modifier);
     if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20 || !Number.isInteger(diceModifier) || Math.abs(diceModifier) > 100000) return;
-    const actor = member.role === 'gm' && actorId ? room.npcs.get(actorId) : member;
+    let actor = member.role === 'gm' && actorId ? room.npcs.get(actorId) : member;
+    let skillRoll = null;
+    if (skillName || skillPlayerId) {
+      const player = room.players.get(skillPlayerId);
+      const target = Number(skillValue);
+      const savedSheet = room.characterSheets.get(skillPlayerId) || {};
+      const normalizedSkillName = cleanText(skillName, 60);
+      const savedSkills = savedSheet.skills || '';
+      const savedSkill = savedSkills.split(/\r?\n/).map(parseCharacterSkillLine)
+        .find((skill) => skill?.name === normalizedSkillName && skill.target === target)
+        || (room.systemId === 'coc'
+          ? [
+            ['SAN', savedSheet.san], ['幸運', savedSheet.luck],
+            ['アイデア', savedSheet.idea], ['知識', savedSheet.knowledge]
+          ].some(([name, value]) => name === normalizedSkillName && value.trim() && Number(value) === target)
+            ? { name: normalizedSkillName, target }
+            : null
+          : null);
+      const canRollSkill = member.role === 'gm' || (member.role === 'pc' && member.playerId === skillPlayerId);
+      if (!canRollSkill || !player || !savedSkill || diceSides !== 100 || diceCount !== 1) return;
+      actor = player;
+      skillRoll = savedSkill;
+    }
     if (!actor) return;
     const results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
     const total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
@@ -685,7 +830,9 @@ io.on('connection', (socket) => {
       id: `${Date.now()}-${socket.id}`,
       text: isSecret
         ? `${actor.name}がシークレットダイスを振りました：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
-        : `${actor.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
+        : skillRoll
+          ? `${actor.name} が「${skillRoll.name} ${skillRoll.target}」で ${notation} を振りました: ${results.join(', ')} (合計 ${total})・${getSkillRollOutcome(results[0], skillRoll.target)}`
+          : `${actor.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
       name: actor.name,
       role: actor.role,
       scope: 'public',

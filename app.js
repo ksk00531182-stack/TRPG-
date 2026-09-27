@@ -31,6 +31,8 @@ const elements = {
   secretDiceInput: $('#secretDiceInput'),
   diceActorOption: $('#diceActorOption'),
   diceActor: $('#diceActor'),
+  skillRollSection: $('#skillRollSection'),
+  skillRollList: $('#skillRollList'),
   npcForm: $('#npcForm'),
   npcName: $('#npcName'),
   membersPanel: $('#membersPanel'),
@@ -71,6 +73,19 @@ const elements = {
   playAreaAssetPanel: $('#playAreaAssetPanel'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
   layerBoxToggle: $('#layerBoxToggle'),
+  characterSheetButton: $('#characterSheetButton'),
+  characterSheetDialog: $('#characterSheetDialog'),
+  characterSheetClose: $('#characterSheetClose'),
+  characterSheetTabs: $('#characterSheetTabs'),
+  characterSheetForm: $('#characterSheetForm'),
+  characterSheetOwner: $('#characterSheetOwner'),
+  characterSheetFields: $('#characterSheetFields'),
+  skillRollSettings: $('#skillRollSettings'),
+  skillRollSettingList: $('#skillRollSettingList'),
+  characterSheetImport: $('#characterSheetImport'),
+  characterSheetImportData: $('#characterSheetImportData'),
+  characterSheetImportButton: $('#characterSheetImportButton'),
+  characterSheetStatus: $('#characterSheetStatus'),
   copyLink: $('#copyLink')
 };
 
@@ -87,6 +102,10 @@ const state = {
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
   showLayerBoxes: true,
+  characterSheetSystemId: '',
+  characterSheetFields: [],
+  characterSheets: [],
+  activeCharacterSheetPlayerId: '',
   playerId: '',
   inviteToken: params.get('invite') || '',
   isInviteMode: Boolean(params.get('room') && (params.get('invite') || '')),
@@ -99,6 +118,12 @@ const state = {
 // ヘルパー: エラーメッセージ等のステータス表示
 function setStatus(message) {
   if (elements.status) elements.status.textContent = message;
+}
+
+function canManageLayerAssets(assets) {
+  if (state.currentRole === 'gm') return true;
+  return state.currentRole === 'pc' && Boolean(state.playerId) && assets.length > 0
+    && assets.every((asset) => asset.category === 'characters' && asset.assignedPlayerId === state.playerId);
 }
 
 // LocalStorage Utils
@@ -343,6 +368,262 @@ function renderMembers(members) {
   if (state.currentRole === 'gm' && state.assets.length) renderAssets(state.assets);
 }
 
+function renderCharacterSheet() {
+  if (!elements.characterSheetFields || !elements.characterSheetForm) return;
+  const isGm = state.currentRole === 'gm';
+  if (elements.characterSheetTabs) {
+    elements.characterSheetTabs.hidden = !isGm;
+    elements.characterSheetTabs.innerHTML = '';
+    if (isGm) {
+      state.characterSheets.forEach((sheet) => {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = `character-sheet-tab${sheet.playerId === state.activeCharacterSheetPlayerId ? ' is-active' : ''}`;
+        tab.textContent = sheet.name || sheet.playerId;
+        tab.setAttribute('aria-selected', String(sheet.playerId === state.activeCharacterSheetPlayerId));
+        tab.addEventListener('click', () => {
+          state.activeCharacterSheetPlayerId = sheet.playerId;
+          renderCharacterSheet();
+        });
+        elements.characterSheetTabs.appendChild(tab);
+      });
+    }
+  }
+
+  const sheet = state.characterSheets.find((item) => item.playerId === state.activeCharacterSheetPlayerId);
+  if (elements.characterSheetImport) elements.characterSheetImport.hidden = state.characterSheetSystemId !== 'coc';
+  if (elements.characterSheetOwner) {
+    const systemName = state.characterSheetSystemId === 'coc' ? 'クトゥルフ神話TRPG' : 'エモクロアTRPG';
+    elements.characterSheetOwner.textContent = sheet ? `${sheet.name || sheet.playerId} ・ ${systemName}` : '参加PCのシートがありません';
+  }
+  elements.characterSheetFields.innerHTML = '';
+  elements.characterSheetForm.hidden = !sheet;
+  if (!sheet) return;
+
+  state.characterSheetFields.forEach(([key, labelText, type, placeholder]) => {
+    if (key === 'rollSkills') {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.dataset.sheetField = key;
+      input.value = sheet.values?.[key] || '';
+      elements.characterSheetFields.appendChild(input);
+      return;
+    }
+    const label = document.createElement('label');
+    label.className = `character-sheet-field${type === 'textarea' ? ' is-wide' : ''}`;
+    label.append(document.createTextNode(labelText));
+    const input = type === 'textarea' ? document.createElement('textarea') : document.createElement('input');
+    if (type === 'textarea') { input.rows = 4; input.maxLength = 5000; }
+    else input.type = type === 'number' ? 'number' : 'text';
+    if (type === 'number') input.step = 'any';
+    if (placeholder) input.placeholder = placeholder;
+    input.dataset.sheetField = key;
+    input.value = sheet.values?.[key] || '';
+    if (key === 'skills') {
+      input.addEventListener('input', () => {
+        sheet.values.skills = input.value;
+        renderSkillRollSettings(sheet);
+        renderSkillRollButtons();
+      });
+    }
+    label.appendChild(input);
+    elements.characterSheetFields.appendChild(label);
+  });
+  renderSkillRollSettings(sheet);
+  renderSkillRollButtons();
+}
+
+function parseCocofoliaCharacter(jsonText) {
+  const character = JSON.parse(jsonText);
+  if (character?.kind !== 'character' || !character.data || typeof character.data !== 'object') {
+    throw new Error('ココフォリアのキャラクターデータではありません');
+  }
+
+  const { data } = character;
+  const values = {};
+  const addValue = (key, value) => {
+    if (typeof value === 'string' || typeof value === 'number') values[key] = String(value);
+  };
+  addValue('characterName', data.name);
+  addValue('memo', data.memo);
+  addValue('initiative', data.initiative);
+
+  const parameterFields = {
+    STR: 'str', CON: 'con', POW: 'pow', DEX: 'dex', APP: 'app',
+    SIZ: 'siz', INT: 'int', EDU: 'edu', DB: 'db'
+  };
+  (Array.isArray(data.params) ? data.params : []).forEach((parameter) => {
+    const key = parameterFields[String(parameter?.label || '').normalize('NFKC').trim().toUpperCase()];
+    if (key) addValue(key, parameter.value);
+  });
+  if (values.int !== undefined) values.idea = values.int;
+  if (values.edu !== undefined) values.knowledge = values.edu;
+
+  const statusFields = { HP: 'hp', MP: 'mp', SAN: 'san', '幸運': 'luck' };
+  (Array.isArray(data.status) ? data.status : []).forEach((status) => {
+    const key = statusFields[String(status?.label || '').normalize('NFKC').trim().toUpperCase()];
+    if (key) addValue(key, status.value ?? status.max);
+  });
+
+  const skills = typeof data.commands === 'string'
+    ? data.commands.split(/\r?\n/).flatMap((line) => {
+      const match = line.match(/^\s*CC\s*<=\s*(\d{1,3})\s*(?:〈([^〉]+)〉|<([^>]+)>)/i);
+      if (!match) return [];
+      const target = Number(match[1]);
+      const name = (match[2] || match[3] || '').trim();
+      return name && target <= 100 ? [`${name} ${target}`] : [];
+    })
+    : [];
+  if (typeof data.commands === 'string') values.skills = skills.join('\n');
+
+  return { values, skillCount: skills.length };
+}
+
+function parseCharacterSkill(line) {
+  const match = String(line || '').normalize('NFKC').trim().match(/^(.+?)\s*[:：]?\s*(\d{1,3})$/);
+  if (!match) return null;
+  const name = match[1].trim();
+  const target = Number(match[2]);
+  return name && target >= 0 && target <= 100 ? { name, target } : null;
+}
+
+const cocBasicRollFields = [
+  { name: 'SAN', field: 'san' },
+  { name: '幸運', field: 'luck' },
+  { name: 'アイデア', field: 'idea' },
+  { name: '知識', field: 'knowledge' }
+];
+
+function getSkillRollKey(skill) {
+  return skill.name;
+}
+
+function getCharacterRollSkills(sheet) {
+  const basicSkills = state.characterSheetSystemId === 'coc'
+    ? cocBasicRollFields.flatMap(({ name, field }) => {
+      const value = String(sheet.values?.[field] ?? '').trim();
+      const target = Number(value);
+      return value && Number.isInteger(target) && target >= 0 && target <= 100
+        ? [{ name, target, isBasic: true }]
+        : [];
+    })
+    : [];
+  const customSkills = String(sheet.values?.skills || '').split(/\r?\n/)
+    .map(parseCharacterSkill).filter(Boolean);
+  const seenNames = new Set();
+  return [...basicSkills, ...customSkills].filter((skill) => {
+    if (seenNames.has(skill.name)) return false;
+    seenNames.add(skill.name);
+    return true;
+  });
+}
+
+function getSelectedSkillRollKeys(sheet, skills) {
+  const savedValue = typeof sheet.values?.rollSkills === 'string' ? sheet.values.rollSkills : '';
+  const savedLines = savedValue.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const explicitSelection = savedLines.includes('*');
+  if (explicitSelection) return new Set(savedLines.filter((line) => line !== '*'));
+  if (!savedLines.length) return new Set(skills.map(getSkillRollKey));
+
+  const selected = new Set(skills.filter((skill) => skill.isBasic).map(getSkillRollKey));
+  savedLines.map(parseCharacterSkill).filter(Boolean).forEach((skill) => selected.add(getSkillRollKey(skill)));
+  return selected;
+}
+
+function serializeSkillRollKeys(selectedSkills) {
+  return ['*', ...selectedSkills].join('\n');
+}
+
+function renderSkillRollSettings(sheet) {
+  if (!elements.skillRollSettings || !elements.skillRollSettingList) return;
+  const skills = getCharacterRollSkills(sheet);
+  const selectionInput = elements.characterSheetFields.querySelector('[data-sheet-field="rollSkills"]');
+  if (!selectionInput) return;
+
+  const selectedSkills = getSelectedSkillRollKeys(sheet, skills);
+  selectionInput.value = serializeSkillRollKeys(selectedSkills);
+  sheet.values.rollSkills = selectionInput.value;
+  elements.skillRollSettings.hidden = skills.length === 0;
+  elements.skillRollSettingList.innerHTML = '';
+
+  skills.forEach((skill) => {
+    const key = getSkillRollKey(skill);
+    const label = document.createElement('label');
+    label.className = 'skill-roll-setting';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedSkills.has(key);
+    checkbox.dataset.skillKey = key;
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedSkills.add(key);
+      else selectedSkills.delete(key);
+      selectionInput.value = serializeSkillRollKeys(selectedSkills);
+      sheet.values.rollSkills = selectionInput.value;
+      elements.skillRollSettingList.querySelectorAll('[data-skill-key]').forEach((item) => {
+        item.checked = selectedSkills.has(item.dataset.skillKey);
+      });
+      renderSkillRollButtons();
+    });
+    const text = document.createElement('span');
+    text.textContent = `${skill.name} ${skill.target}`;
+    label.append(checkbox, text);
+    elements.skillRollSettingList.appendChild(label);
+  });
+}
+
+function renderSkillRollButtons() {
+  if (!elements.skillRollList || !elements.skillRollSection) return;
+  elements.skillRollList.innerHTML = '';
+  const sheets = state.currentRole === 'gm'
+    ? state.characterSheets
+    : state.characterSheets.filter((sheet) => sheet.playerId === state.playerId);
+  let skillCount = 0;
+  sheets.forEach((sheet) => {
+    const skills = getCharacterRollSkills(sheet);
+    const selectedSkills = getSelectedSkillRollKeys(sheet, skills);
+    skills.forEach((skill) => {
+      if (!selectedSkills.has(getSkillRollKey(skill))) return;
+      skillCount += 1;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'skill-roll-button';
+      button.textContent = state.currentRole === 'gm'
+        ? `${sheet.name || sheet.playerId}・${skill.name} ${skill.target}`
+        : `${skill.name} ${skill.target}`;
+      button.title = `${skill.name}（目標値${skill.target}）を1D100で判定`;
+      button.addEventListener('click', () => {
+        socket.emit('roll-dice', {
+          sides: 100,
+          count: 1,
+          expression: '1D100',
+          skillName: skill.name,
+          skillValue: skill.target,
+          skillPlayerId: sheet.playerId
+        });
+      });
+      elements.skillRollList.appendChild(button);
+    });
+  });
+  elements.skillRollSection.hidden = skillCount === 0;
+}
+
+function loadCharacterSheets() {
+  if (!state.sessionToken) return;
+  socket.emit('get-character-sheets', {}, (result) => {
+    if (!result?.ok) {
+      if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = result?.error || 'シートを取得できませんでした';
+      return;
+    }
+    state.characterSheetSystemId = result.systemId;
+    state.characterSheetFields = Array.isArray(result.fields) ? result.fields : [];
+    state.characterSheets = Array.isArray(result.sheets) ? result.sheets : [];
+    if (!state.characterSheets.some((sheet) => sheet.playerId === state.activeCharacterSheetPlayerId)) {
+      state.activeCharacterSheetPlayerId = state.currentRole === 'pc' ? state.playerId : state.characterSheets[0]?.playerId || '';
+    }
+    renderCharacterSheet();
+  });
+}
+
 function renderAssets(assets) {
   if (!elements.assetList) return;
   state.assets = Array.isArray(assets) ? assets : [];
@@ -366,7 +647,7 @@ function renderAssets(assets) {
       img.src = asset.url;
       img.alt = asset.name || '';
       img.loading = 'lazy';
-      if (state.currentRole === 'gm') {
+          if (canManageLayerAssets(groupAssets)) {
         const placeButton = document.createElement('button');
         placeButton.type = 'button';
         placeButton.className = 'asset-place';
@@ -518,7 +799,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
   elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || bgmLayers.length === 0;
   const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
   const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
-  const canOperateSelectedAssets = state.currentRole === 'gm' && selectedAssets.length >= 2 && selectedCategories.size === 1;
+  const canOperateSelectedAssets = selectedAssets.length >= 2 && selectedCategories.size === 1 && canManageLayerAssets(selectedAssets);
   const selectedCharacters = canOperateSelectedAssets && selectedCategories.has('characters');
   const selectedMaterials = state.currentRole === 'gm' && selectedAssets.length >= 2
     && !selectedCategories.has('characters') && !selectedCategories.has('bgm');
@@ -697,7 +978,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           groupCount.className = 'layer-group-count';
           groupCount.textContent = String(groupAssets.length);
           groupRow.append(groupMarker, groupName, groupCount);
-          if (state.currentRole === 'gm') {
+          if (canManageLayerAssets(groupAssets)) {
             const controls = document.createElement('div');
             controls.className = 'layer-controls';
             [
@@ -725,8 +1006,9 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
       row.hidden = Boolean(activeGroupId && state.collapsedGroupIds.has(activeGroupId));
       row.dataset.assetId = placedAsset.id;
-      row.draggable = state.currentRole === 'gm' && (isBgmLayer || !placedAsset.locked);
-      if (state.currentRole === 'gm' && !isBgmLayer) {
+      const canManagePlacedAsset = canManageLayerAssets([placedAsset]);
+      row.draggable = canManagePlacedAsset && (isBgmLayer || !placedAsset.locked);
+      if (canManagePlacedAsset && !isBgmLayer) {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'layer-select';
@@ -803,7 +1085,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
         controls.append(toggleButton, volumeLabel, deleteButton);
         row.appendChild(controls);
-      } else if (state.currentRole === 'gm' && !isBgmLayer) {
+      } else if (canManagePlacedAsset && !isBgmLayer) {
         const controls = document.createElement('div');
         controls.className = 'layer-controls';
         const lockButton = document.createElement('button');
@@ -846,7 +1128,10 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
 }
 
 function editLayerLabel(labelElement, target) {
-  if (state.currentRole !== 'gm' || !labelElement || labelElement.querySelector('input')) return;
+  const targetAssets = target.groupId
+    ? state.boardAssets.filter((asset) => asset.groupId === target.groupId)
+    : state.boardAssets.filter((asset) => asset.id === target.assetId);
+  if (!canManageLayerAssets(targetAssets) || !labelElement || labelElement.querySelector('input')) return;
   const input = document.createElement('input');
   input.className = 'layer-inline-edit';
   input.maxLength = 40;
@@ -941,7 +1226,7 @@ async function uploadAssets() {
 
 function updateLayerBoxToggleButton() {
   if (!elements.layerBoxToggle) return;
-  elements.layerBoxToggle.hidden = state.currentRole !== 'gm';
+  elements.layerBoxToggle.hidden = !['gm', 'pc'].includes(state.currentRole);
   elements.layerBoxToggle.textContent = state.showLayerBoxes ? 'レイヤーを非表示' : 'レイヤーを表示';
   elements.layerBoxToggle.setAttribute('aria-pressed', String(state.showLayerBoxes));
 }
@@ -956,6 +1241,7 @@ function enterRoom(result, role) {
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
   updateLayerBoxToggleButton();
+  if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
   if (elements.assetCategory) {
     if (role === 'pc') elements.assetCategory.value = 'characters';
     const categoryLabel = elements.assetCategory.closest('.asset-genre');
@@ -994,6 +1280,7 @@ function enterRoom(result, role) {
   if (elements.diceActorOption) elements.diceActorOption.hidden = role !== 'gm';
   if (elements.npcForm) elements.npcForm.hidden = role !== 'gm';
   renderMembers(state.currentMembers);
+  loadCharacterSheets();
   if (role !== 'gm' && elements.secretDiceInput) elements.secretDiceInput.checked = false;
   if (elements.entry) elements.entry.hidden = true;
   if (elements.room) elements.room.hidden = false;
@@ -1182,6 +1469,62 @@ if (elements.memoInput) {
   elements.memoInput.addEventListener('input', () => saveMemo(state.currentRoomId, elements.memoInput.value));
 }
 
+elements.characterSheetButton?.addEventListener('click', () => {
+  if (!elements.characterSheetDialog?.open) elements.characterSheetDialog?.showModal();
+  loadCharacterSheets();
+});
+elements.characterSheetClose?.addEventListener('click', () => elements.characterSheetDialog?.close());
+elements.characterSheetDialog?.addEventListener('click', (event) => {
+  if (event.target === elements.characterSheetDialog) elements.characterSheetDialog.close();
+});
+elements.characterSheetImportButton?.addEventListener('click', () => {
+  try {
+    const imported = parseCocofoliaCharacter(elements.characterSheetImportData?.value || '');
+    const fields = new Map([...elements.characterSheetFields.querySelectorAll('[data-sheet-field]')]
+      .map((input) => [input.dataset.sheetField, input]));
+    let importedCount = 0;
+    Object.entries(imported.values).forEach(([key, value]) => {
+      const input = fields.get(key);
+      if (!input) return;
+      input.value = value;
+      importedCount += 1;
+    });
+    const sheet = state.characterSheets.find((item) => item.playerId === state.activeCharacterSheetPlayerId);
+    if (sheet) {
+      Object.assign(sheet.values, imported.values);
+      renderSkillRollSettings(sheet);
+      renderSkillRollButtons();
+    }
+    if (elements.characterSheetStatus) {
+      elements.characterSheetStatus.textContent = `JSONを反映しました（${importedCount}項目、技能${imported.skillCount}件）。内容を確認して保存してください。`;
+    }
+  } catch (error) {
+    if (elements.characterSheetStatus) {
+      elements.characterSheetStatus.textContent = error instanceof SyntaxError
+        ? 'JSONを読み取れません。コピーしたデータを確認してください。'
+        : error.message;
+    }
+  }
+});
+elements.characterSheetForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const playerId = state.activeCharacterSheetPlayerId;
+  if (!playerId) return;
+  const values = Object.fromEntries([...elements.characterSheetFields.querySelectorAll('[data-sheet-field]')]
+    .map((input) => [input.dataset.sheetField, input.value]));
+  if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = '保存中...';
+  socket.emit('update-character-sheet', { playerId, values }, (result) => {
+    if (!result?.ok) {
+      if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = result?.error || '保存できませんでした';
+      return;
+    }
+    const sheet = state.characterSheets.find((item) => item.playerId === playerId);
+    if (sheet) sheet.values = result.values;
+    if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = '保存しました';
+    renderCharacterSheet();
+  });
+});
+
 elements.playAreaTabs?.forEach((tab) => {
   tab.addEventListener('click', () => {
     const shouldClose = tab.classList.contains('is-active') && elements.playAreaAssetPanel && !elements.playAreaAssetPanel.hidden;
@@ -1215,7 +1558,21 @@ socket.on('message', (message) => {
     updateSavedRoom(state.currentRoomId, { updatedAt: new Date().toISOString() });
   }
 });
-socket.on('members', renderMembers);
+socket.on('members', (members) => {
+  renderMembers(members);
+  if (state.currentRole === 'gm') loadCharacterSheets();
+});
+socket.on('character-sheet-updated', (update) => {
+  const existing = state.characterSheets.find((sheet) => sheet.playerId === update.playerId);
+  if (existing) {
+    existing.name = update.name;
+    existing.values = update.values;
+  } else {
+    state.characterSheets.push(update);
+  }
+  renderSkillRollButtons();
+  if (elements.characterSheetDialog?.open) renderCharacterSheet();
+});
 socket.on('typing', ({ name, isTyping }) => {
   if (elements.typing) elements.typing.textContent = isTyping ? `${name} が入力中...` : '';
 });
@@ -1301,10 +1658,11 @@ if (elements.assetList) {
 const layerBoxes = [elements.layerBox, elements.characterLayerBox].filter(Boolean);
 layerBoxes.forEach((layerBox) => {
   layerBox.addEventListener('dblclick', (event) => {
-    if (state.currentRole !== 'gm' || event.target.closest('button, input')) return;
+    if (event.target.closest('button, input')) return;
     const groupName = event.target.closest('.layer-group-name');
     if (groupName) {
-      editLayerLabel(groupName, { groupId: groupName.closest('.layer-group-row')?.dataset.groupId });
+      const groupId = groupName.closest('.layer-group-row')?.dataset.groupId;
+      editLayerLabel(groupName, { groupId });
       return;
     }
     const layerName = event.target.closest('.layer-name');
@@ -1319,8 +1677,12 @@ layerBoxes.forEach((layerBox) => {
       return;
     }
     const button = event.target.closest('button[data-layer-action]');
-    if (!button || state.currentRole !== 'gm') return;
+    if (!button) return;
     const payload = { assetId: button.dataset.assetId, groupId: button.dataset.groupId, action: button.dataset.layerAction };
+    const targetAssets = payload.groupId
+      ? state.boardAssets.filter((asset) => asset.groupId === payload.groupId)
+      : state.boardAssets.filter((asset) => asset.id === payload.assetId);
+    if (!canManageLayerAssets(targetAssets)) return;
     if (button.dataset.visible !== undefined) payload.visible = button.dataset.visible === 'true';
     if (button.dataset.locked !== undefined) payload.locked = button.dataset.locked === 'true';
     socket.emit('update-board-asset', payload, (result) => {
@@ -1355,22 +1717,36 @@ reorderableLayerBoxes.forEach((layerBox) => {
     layerBox.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
   });
   layerBox.addEventListener('dragover', (event) => {
-    if (state.currentRole !== 'gm' || !event.target.closest('.layer-row')) return;
+    const asset = state.boardAssets.find((item) => item.id === event.target.closest('.layer-row')?.dataset.assetId);
+    if (!asset || !canManageLayerAssets([asset])) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   });
   layerBox.addEventListener('drop', (event) => {
-    if (state.currentRole !== 'gm') return;
     const targetRow = event.target.closest('.layer-row');
     const draggedId = event.dataTransfer.getData('text/plain');
     if (!targetRow || !draggedId || draggedId === targetRow.dataset.assetId) return;
     event.preventDefault();
+    const draggedAsset = state.boardAssets.find((asset) => asset.id === draggedId);
+    const targetAsset = state.boardAssets.find((asset) => asset.id === targetRow.dataset.assetId);
+    if (!canManageLayerAssets([draggedAsset, targetAsset])) return;
     const visibleOrder = [...state.boardAssets].reverse();
-    const sourceIndex = visibleOrder.findIndex((asset) => asset.id === draggedId);
-    const targetIndex = visibleOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
+    let sourceIndex = visibleOrder.findIndex((asset) => asset.id === draggedId);
+    let targetIndex = visibleOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
     if (sourceIndex < 0 || targetIndex < 0) return;
-    const [draggedAsset] = visibleOrder.splice(sourceIndex, 1);
-    visibleOrder.splice(targetIndex, 0, draggedAsset);
+    if (state.currentRole === 'pc') {
+      const ownedIds = new Set(state.boardAssets.filter((asset) => canManageLayerAssets([asset])).map((asset) => asset.id));
+      const ownedPositions = visibleOrder.map((asset, index) => ownedIds.has(asset.id) ? index : -1).filter((index) => index >= 0);
+      const ownedOrder = ownedPositions.map((index) => visibleOrder[index]);
+      sourceIndex = ownedOrder.findIndex((asset) => asset.id === draggedId);
+      targetIndex = ownedOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
+      const [movedAsset] = ownedOrder.splice(sourceIndex, 1);
+      ownedOrder.splice(targetIndex, 0, movedAsset);
+      ownedPositions.forEach((position, index) => { visibleOrder[position] = ownedOrder[index]; });
+    } else {
+      const [movedAsset] = visibleOrder.splice(sourceIndex, 1);
+      visibleOrder.splice(targetIndex, 0, movedAsset);
+    }
     state.boardAssets = [...visibleOrder].reverse();
     renderBoardAssets();
     socket.emit('update-board-asset', { assetId: draggedId, action: 'reorder', order: visibleOrder.map((asset) => asset.id) }, (result) => {
@@ -1435,7 +1811,8 @@ const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLaye
 layerArrangeToolsets.forEach((tools) => {
   tools.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-layer-batch]');
-    if (!button || state.currentRole !== 'gm' || state.selectedLayerIds.size < 2) return;
+    const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
+    if (!button || selectedAssets.length < 2 || !canManageLayerAssets(selectedAssets)) return;
     socket.emit('update-board-asset', { action: button.dataset.layerBatch, assetIds: [...state.selectedLayerIds] }, (result) => {
       if (!result?.ok) {
         setStatus(result?.error || 'レイヤーを整列できませんでした');
@@ -1461,12 +1838,12 @@ const layerGroupForms = [
 layerGroupForms.forEach(([form, nameInput]) => {
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
-    if (state.currentRole !== 'gm') return;
-    if (state.selectedLayerIds.size < 2) {
+    const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
+    if (selectedAssets.length < 2 || !canManageLayerAssets(selectedAssets)) {
       setStatus('グループ化するレイヤーを2つ以上選択してください');
       return;
     }
-    const selectedCategories = new Set(state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id)).map((asset) => asset.category));
+    const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
     if (selectedCategories.has('bgm') || (selectedCategories.has('characters') && selectedCategories.size > 1)) {
       setStatus('キャラクターと他の素材は同じグループにできません。BGMはグループ化できません');
       return;
