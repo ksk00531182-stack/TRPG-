@@ -282,6 +282,32 @@ function broadcastMembers(id) {
   const room = getRoom(id);
   io.to(`room:${id}`).emit('members', [...room.members.values(), ...room.npcs.values()]);
 }
+function getCharacterStatus(room, playerId) {
+  const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
+  return {
+    playerId,
+    name: room.players.get(playerId)?.name || playerId,
+    hp: values.hp,
+    san: values.san,
+    luck: values.luck
+  };
+}
+function adjustCharacterStatus(room, playerId, field, delta) {
+  const limits = { hp: 100000, san: 99, luck: 99 };
+  if (!Object.prototype.hasOwnProperty.call(limits, field) || !Number.isInteger(delta) || Math.abs(delta) !== 1) return null;
+  const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
+  const current = Number(values[field]) || 0;
+  values[field] = String(Math.max(0, Math.min(limits[field], current + delta)));
+  room.characterSheets.set(playerId, values);
+  touchRoom(room);
+  return values;
+}
+function getOnlineCharacterStatuses(room) {
+  const playerIds = new Set([...room.members.values()]
+    .filter((member) => member.role === 'pc' && member.playerId)
+    .map((member) => member.playerId));
+  return [...playerIds].map((playerId) => getCharacterStatus(room, playerId));
+}
 function canSeeMessage(message, member) {
   if (message.scope !== 'private') return true;
   if (member.role === 'gm') return true;
@@ -344,6 +370,13 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
 }
 
 io.on('connection', (socket) => {
+  socket.on('get-character-statuses', (_payload, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || !socket.data.member) { acknowledge?.({ ok: false, error: 'ルームに参加していません。' }); return; }
+    acknowledge?.({ ok: true, systemId: room.systemId, statuses: getOnlineCharacterStatuses(room) });
+  });
+
   socket.on('get-character-sheets', (_payload, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
@@ -379,7 +412,36 @@ io.on('connection', (socket) => {
         io.to(recipient.id).emit('character-sheet-updated', update);
       }
     });
+    io.to(`room:${id}`).emit('character-status-updated', getCharacterStatus(room, playerId));
     acknowledge?.({ ok: true, ...update });
+  });
+
+  socket.on('adjust-character-status', ({ playerId, field, delta } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const member = socket.data.member;
+    if (!room || !member || room.systemId !== 'coc' || !room.players.has(playerId)) {
+      acknowledge?.({ ok: false, error: 'キャラクターまたはステータスを確認できません。' });
+      return;
+    }
+    if (member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+      acknowledge?.({ ok: false, error: 'このキャラクターのステータスを変更する権限がありません。' });
+      return;
+    }
+    const values = adjustCharacterStatus(room, playerId, field, delta);
+    if (!values) {
+      acknowledge?.({ ok: false, error: '変更するステータスまたは増減値が不正です。' });
+      return;
+    }
+    const update = { playerId, values, name: room.players.get(playerId)?.name || playerId };
+    room.members.forEach((recipient) => {
+      if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
+        io.to(recipient.id).emit('character-sheet-updated', update);
+      }
+    });
+    const status = getCharacterStatus(room, playerId);
+    io.to(`room:${id}`).emit('character-status-updated', status);
+    acknowledge?.({ ok: true, status });
   });
 
   socket.on('create-room', ({ systemId, roomTitle, name } = {}, acknowledge) => {
@@ -862,7 +924,9 @@ io.on('connection', (socket) => {
 
   socket.on('asset-added', (asset) => {
     const id = socket.data.roomId;
-    if (id && socket.data.member && rooms.get(id)?.assets.has(asset?.key) && asset?.key?.startsWith(`rooms/${id}/`)) io.to(`room:${id}`).emit('asset-added', asset);
+    if (id && socket.data.member && rooms.get(id)?.assets.has(asset?.key) && asset?.key?.startsWith(`rooms/${id}/`)) {
+      socket.to(`room:${id}`).emit('asset-added', asset);
+    }
   });
 
   socket.on('disconnect', () => {

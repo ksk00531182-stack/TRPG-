@@ -71,6 +71,7 @@ const elements = {
   characterLayerGroupName: $('#characterLayerGroupName'),
   characterLayerArrangeTools: $('#characterLayerArrangeTools'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
+  characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
   layerBoxToggle: $('#layerBoxToggle'),
   characterSheetButton: $('#characterSheetButton'),
@@ -95,6 +96,7 @@ const state = {
   currentRole: 'pc',
   currentRoomId: '',
   currentMembers: [],
+  characterStatuses: [],
   assets: [],
   boardAssets: [],
   bgmPlayers: new Map(),
@@ -365,7 +367,66 @@ function renderMembers(members) {
       elements.diceActor.appendChild(option);
     });
   }
+  loadCharacterStatuses();
   if (state.currentRole === 'gm' && state.assets.length) renderAssets(state.assets);
+}
+
+function renderCharacterStatuses() {
+  if (!elements.characterStatusBoxes) return;
+  elements.characterStatusBoxes.innerHTML = '';
+  state.characterStatuses.forEach((status) => {
+    const card = document.createElement('article');
+    card.className = 'character-status-card';
+    const heading = document.createElement('h3');
+    heading.textContent = status.name || status.playerId;
+    const values = document.createElement('dl');
+    [['HP', status.hp], ['SAN', status.san], ['幸運', status.luck]].forEach(([label, value]) => {
+      const row = document.createElement('div');
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const detail = document.createElement('dd');
+      detail.textContent = String(value ?? '').trim() || '－';
+      row.append(term, detail);
+      if (state.currentRole === 'gm' || (state.currentRole === 'pc' && status.playerId === state.playerId)) {
+        const controls = document.createElement('span');
+        controls.className = 'character-status-controls';
+        [['−', -1, '減らす'], ['+', 1, '増やす']].forEach(([symbol, delta, description]) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'character-status-adjust';
+          button.textContent = symbol;
+          button.title = `${label}を1${description}`;
+          button.setAttribute('aria-label', `${status.name || status.playerId}の${label}を1${description}`);
+          button.disabled = delta < 0 && Number(value || 0) <= 0;
+          button.addEventListener('click', () => {
+            button.disabled = true;
+            socket.emit('adjust-character-status', { playerId: status.playerId, field: label === 'HP' ? 'hp' : label === 'SAN' ? 'san' : 'luck', delta }, (result) => {
+              if (!result?.ok) renderCharacterStatuses();
+            });
+          });
+          controls.appendChild(button);
+        });
+        row.appendChild(controls);
+      }
+      values.appendChild(row);
+    });
+    card.append(heading, values);
+    elements.characterStatusBoxes.appendChild(card);
+  });
+  elements.characterStatusBoxes.hidden = state.currentRole === 'entry'
+    || state.characterSheetSystemId !== 'coc'
+    || !state.showLayerBoxes
+    || state.characterStatuses.length === 0;
+}
+
+function loadCharacterStatuses() {
+  if (!state.sessionToken) return;
+  socket.emit('get-character-statuses', {}, (result) => {
+    if (!result?.ok) return;
+    state.characterSheetSystemId = result.systemId || state.characterSheetSystemId;
+    state.characterStatuses = Array.isArray(result.statuses) ? result.statuses : [];
+    renderCharacterStatuses();
+  });
 }
 
 function renderCharacterSheet() {
@@ -575,7 +636,7 @@ function renderSkillRollButtons() {
   if (!elements.skillRollList || !elements.skillRollSection) return;
   elements.skillRollList.innerHTML = '';
   const sheets = state.currentRole === 'gm'
-    ? state.characterSheets
+    ? []
     : state.characterSheets.filter((sheet) => sheet.playerId === state.playerId);
   let skillCount = 0;
   sheets.forEach((sheet) => {
@@ -600,6 +661,7 @@ function renderSkillRollButtons() {
           skillValue: skill.target,
           skillPlayerId: sheet.playerId
         });
+        switchSessionTab('chat');
       });
       elements.skillRollList.appendChild(button);
     });
@@ -797,6 +859,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     ? !state.showLayerBoxes || characterLayers.length === 0
     : state.currentRole !== 'pc' || !state.showLayerBoxes || visibleCharacterLayers.length === 0;
   elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || bgmLayers.length === 0;
+  renderCharacterStatuses();
   const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
   const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
   const canOperateSelectedAssets = selectedAssets.length >= 2 && selectedCategories.size === 1 && canManageLayerAssets(selectedAssets);
@@ -1240,6 +1303,8 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  state.characterSheetSystemId = result.systemId || '';
+  state.characterStatuses = [];
   updateLayerBoxToggleButton();
   if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
   if (elements.assetCategory) {
@@ -1255,6 +1320,7 @@ function enterRoom(result, role) {
   }
   renderBoardAssets();
   state.sessionToken = result.sessionToken;
+  loadCharacterStatuses();
   state.inviteToken = result.inviteToken || state.inviteToken;
   if (role === 'pc' && state.playerId) {
     savePlayerId(result.roomId, state.playerId);
@@ -1561,6 +1627,12 @@ socket.on('message', (message) => {
 socket.on('members', (members) => {
   renderMembers(members);
   if (state.currentRole === 'gm') loadCharacterSheets();
+});
+socket.on('character-status-updated', (status) => {
+  const existing = state.characterStatuses.find((item) => item.playerId === status.playerId);
+  if (existing) Object.assign(existing, status);
+  else state.characterStatuses.push(status);
+  renderCharacterStatuses();
 });
 socket.on('character-sheet-updated', (update) => {
   const existing = state.characterSheets.find((sheet) => sheet.playerId === update.playerId);
