@@ -1223,22 +1223,41 @@ function editLayerLabel(labelElement, target) {
   input.addEventListener('blur', () => finish(true), { once: true });
 }
 
-async function loadAssets() {
-  if (!state.sessionToken) return;
-  try {
-    const response = await fetch('/api/assets', { headers: { Authorization: `Bearer ${state.sessionToken}` } });
-    if (!response.ok) {
-      if (elements.assetStatus) {
-        elements.assetStatus.textContent = response.status === 503 ? 'R2未設定' : '素材を取得できません';
+async function loadAssets({ afterUpload = false } = {}) {
+  if (!state.sessionToken) return false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch('/api/assets', { headers: { Authorization: `Bearer ${state.sessionToken}` } });
+      if (!response.ok) {
+        if (elements.assetStatus) {
+          elements.assetStatus.textContent = response.status === 503
+            ? 'R2未設定'
+            : afterUpload
+              ? `素材は追加されましたが、一覧を更新できません（HTTP ${response.status}）`
+              : `素材を取得できません（HTTP ${response.status}）`;
+        }
+        return false;
       }
-      return;
+      const data = await response.json();
+      renderAssets(data.assets || []);
+      if (elements.assetStatus) elements.assetStatus.textContent = '';
+      return true;
+    } catch (error) {
+      if (attempt < 2) {
+        if (elements.assetStatus) elements.assetStatus.textContent = '素材一覧を再取得中...';
+        await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+        continue;
+      }
+      console.error('素材一覧の取得に失敗しました:', error);
+      if (elements.assetStatus) {
+        elements.assetStatus.textContent = afterUpload
+          ? '素材は追加されましたが、一覧の通信に失敗しました。接続を確認して再読み込みしてください'
+          : `素材一覧の通信に失敗しました${error?.message ? `: ${error.message}` : ''}`;
+      }
+      return false;
     }
-    const data = await response.json();
-    renderAssets(data.assets || []);
-    if (elements.assetStatus) elements.assetStatus.textContent = '';
-  } catch {
-    if (elements.assetStatus) elements.assetStatus.textContent = '通信エラーが発生しました';
   }
+  return false;
 }
 
 async function uploadAssets() {
@@ -1274,8 +1293,8 @@ async function uploadAssets() {
       socket.emit('asset-added', asset);
     }
     elements.assetFiles.value = '';
-    if (elements.assetStatus) elements.assetStatus.textContent = 'アップロード完了';
-    loadAssets();
+    const assetsLoaded = await loadAssets({ afterUpload: true });
+    if (assetsLoaded && elements.assetStatus) elements.assetStatus.textContent = 'アップロード完了';
   } catch (error) {
     if (elements.assetStatus) {
       elements.assetStatus.textContent = error.name === 'AbortError'
