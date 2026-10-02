@@ -241,9 +241,10 @@ async function handleAssetApi(request, response, requestPath) {
     }
     const key = `rooms/${session.roomId}/${category}/${crypto.randomUUID()}-${name}`;
     const uploadUrl = await getSignedUrl(r2, new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, ContentType: type }), { expiresIn: 600 });
+    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }), { expiresIn: 3600 });
     room.assets.set(key, { key, name, category, type, size });
     touchRoom(room);
-    sendJson(response, 200, { asset: { key, name, category, type, size }, uploadUrl });
+    sendJson(response, 200, { asset: { key, name, category, type, size, url }, uploadUrl });
     return true;
   }
 

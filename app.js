@@ -1272,6 +1272,7 @@ async function uploadAssets() {
   if (elements.assetStatus) elements.assetStatus.textContent = `${files.length}件をアップロード中...`;
   
   try {
+    const uploadedAssets = [];
     for (const file of files) {
       const permission = await fetch('/api/assets/upload-url', {
         method: 'POST',
@@ -1290,11 +1291,14 @@ async function uploadAssets() {
       } finally {
         window.clearTimeout(timeout);
       }
+      uploadedAssets.push(asset);
       socket.emit('asset-added', asset);
     }
     elements.assetFiles.value = '';
-    const assetsLoaded = await loadAssets({ afterUpload: true });
-    if (assetsLoaded && elements.assetStatus) elements.assetStatus.textContent = 'アップロード完了';
+    const uploadedKeys = new Set(uploadedAssets.map((asset) => asset.key));
+    state.assets = [...state.assets.filter((asset) => !uploadedKeys.has(asset.key)), ...uploadedAssets];
+    renderAssets(state.assets);
+    if (elements.assetStatus) elements.assetStatus.textContent = 'アップロード完了';
   } catch (error) {
     if (elements.assetStatus) {
       elements.assetStatus.textContent = error.name === 'AbortError'
@@ -1667,7 +1671,14 @@ socket.on('character-sheet-updated', (update) => {
 socket.on('typing', ({ name, isTyping }) => {
   if (elements.typing) elements.typing.textContent = isTyping ? `${name} が入力中...` : '';
 });
-socket.on('asset-added', loadAssets);
+socket.on('asset-added', (asset) => {
+  if (!asset?.key || !asset.url) {
+    loadAssets();
+    return;
+  }
+  state.assets = [...state.assets.filter((item) => item.key !== asset.key), asset];
+  renderAssets(state.assets);
+});
 socket.on('asset-deleted', loadAssets);
 socket.on('character-assigned', loadAssets);
 socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime }) => {
