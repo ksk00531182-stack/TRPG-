@@ -32,13 +32,10 @@ const elements = {
   diceActor: $('#diceActor'),
   skillRollSection: $('#skillRollSection'),
   skillRollList: $('#skillRollList'),
-  npcForm: $('#npcForm'),
-  npcName: $('#npcName'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
   roomLabel: $('#roomLabel'),
   roomSystem: $('#roomSystem'),
-  memberList: $('#memberList'),
   messageTarget: $('#messageTarget'),
   messageList: $('#messageList'),
   messageForm: $('#messageForm'),
@@ -54,11 +51,8 @@ const elements = {
   boardAssets: $('#boardAssets'),
   characterBoardAssets: $('#characterBoardAssets'),
   layerBox: $('#layerBox'),
-  layerBoxHandle: $('#layerBox h3'),
   characterLayerBox: $('#characterLayerBox'),
-  characterLayerBoxHandle: $('#characterLayerBox h3'),
   bgmLayerBox: $('#bgmLayerBox'),
-  bgmLayerBoxHandle: $('#bgmLayerBox h3'),
   layerList: $('#layerList'),
   characterLayerList: $('#characterLayerList'),
   bgmLayerList: $('#bgmLayerList'),
@@ -69,6 +63,10 @@ const elements = {
   characterLayerGroupName: $('#characterLayerGroupName'),
   characterLayerArrangeTools: $('#characterLayerArrangeTools'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
+  pcSidebarTab: $('#pcSidebarTab'),
+  layerSidebarTab: $('#layerSidebarTab'),
+  pcSidebarPanel: $('#pcSidebarPanel'),
+  layerSidebarPanel: $('#layerSidebarPanel'),
   characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
   layerBoxToggle: $('#layerBoxToggle'),
@@ -323,24 +321,8 @@ function addMessage(message) {
 }
 
 function renderMembers(members) {
-  if (!elements.memberList || !Array.isArray(members)) return;
+  if (!Array.isArray(members)) return;
   state.currentMembers = members;
-  elements.memberList.innerHTML = '';
-  if (elements.npcForm) elements.npcForm.hidden = state.currentRole !== 'gm';
-  members.forEach((member) => {
-    const li = document.createElement('li');
-    const presence = document.createElement('span');
-    presence.className = 'presence';
-    
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = member.name || '';
-    
-    const roleSmall = document.createElement('small');
-    roleSmall.textContent = member.role === 'gm' ? 'GM' : member.role === 'npc' ? 'NPC' : 'PC';
-    
-    li.append(presence, nameSpan, roleSmall);
-    elements.memberList.appendChild(li);
-  });
   if (elements.messageTarget) {
     elements.messageTarget.innerHTML = '';
     const allOption = document.createElement('option');
@@ -374,16 +356,38 @@ function renderCharacterStatuses() {
   elements.characterStatusBoxes.innerHTML = '';
   state.characterStatuses.forEach((status) => {
     const card = document.createElement('article');
-    card.className = 'character-status-card';
+    card.className = `character-status-card${status.role === 'npc' ? ' is-npc' : ''}`;
+    const headingRow = document.createElement('div');
+    headingRow.className = 'character-status-heading';
     const heading = document.createElement('h3');
-    heading.textContent = status.name || status.playerId;
+    heading.textContent = status.role === 'npc' ? status.name : status.characterName || 'キャラクター未設定';
+    headingRow.appendChild(heading);
+    if (status.role === 'npc' && state.currentRole === 'gm') {
+      const visibilityButton = document.createElement('button');
+      visibilityButton.type = 'button';
+      visibilityButton.className = 'npc-status-visibility-toggle';
+      visibilityButton.textContent = status.statsVisibleToPlayers === false ? 'PCに公開' : 'PCに非公開';
+      visibilityButton.addEventListener('click', () => {
+        visibilityButton.disabled = true;
+        socket.emit('set-npc-status-visibility', {
+          npcId: status.playerId,
+          visible: status.statsVisibleToPlayers === false
+        }, (result) => {
+          if (!result?.ok) renderCharacterStatuses();
+        });
+      });
+      headingRow.appendChild(visibilityButton);
+    }
+    const playerName = document.createElement('p');
+    playerName.className = 'character-status-player';
+    playerName.textContent = status.role === 'npc' ? 'NPC' : `PC: ${status.name || status.playerId}`;
     const values = document.createElement('dl');
     [['HP', status.hp], ['SAN', status.san], ['幸運', status.luck]].forEach(([label, value]) => {
       const row = document.createElement('div');
       const term = document.createElement('dt');
       term.textContent = label;
       const detail = document.createElement('dd');
-      detail.textContent = String(value ?? '').trim() || '－';
+      detail.textContent = status.statsHidden ? '非公開' : String(value ?? '').trim() || '－';
       row.append(term, detail);
       if (state.currentRole === 'gm' || (state.currentRole === 'pc' && status.playerId === state.playerId)) {
         const controls = document.createElement('span');
@@ -408,12 +412,11 @@ function renderCharacterStatuses() {
       }
       values.appendChild(row);
     });
-    card.append(heading, values);
+    card.append(headingRow, playerName, values);
     elements.characterStatusBoxes.appendChild(card);
   });
   elements.characterStatusBoxes.hidden = state.currentRole === 'entry'
     || state.characterSheetSystemId !== 'coc'
-    || !state.showLayerBoxes
     || state.characterStatuses.length === 0;
 }
 
@@ -438,7 +441,7 @@ function renderCharacterSheet() {
         const tab = document.createElement('button');
         tab.type = 'button';
         tab.className = `character-sheet-tab${sheet.playerId === state.activeCharacterSheetPlayerId ? ' is-active' : ''}`;
-        tab.textContent = sheet.name || sheet.playerId;
+        tab.textContent = `${sheet.role === 'npc' ? 'NPC' : 'PC'}・${sheet.name || sheet.playerId}`;
         tab.setAttribute('aria-selected', String(sheet.playerId === state.activeCharacterSheetPlayerId));
         tab.addEventListener('click', () => {
           state.activeCharacterSheetPlayerId = sheet.playerId;
@@ -446,6 +449,26 @@ function renderCharacterSheet() {
         });
         elements.characterSheetTabs.appendChild(tab);
       });
+      const addNpcButton = document.createElement('button');
+      addNpcButton.type = 'button';
+      addNpcButton.className = 'character-sheet-tab character-sheet-tab-add';
+      addNpcButton.textContent = '+';
+      addNpcButton.title = 'NPCを追加';
+      addNpcButton.setAttribute('aria-label', 'NPCを追加');
+      addNpcButton.addEventListener('click', () => {
+        addNpcButton.disabled = true;
+        socket.emit('add-npc', {}, (result) => {
+          if (!result?.ok) {
+            addNpcButton.disabled = false;
+            if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = result?.error || 'NPCを追加できませんでした';
+            return;
+          }
+          state.activeCharacterSheetPlayerId = result.npc.id;
+          if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = 'NPCを追加しました。名前や能力値を入力してください';
+          loadCharacterSheets();
+        });
+      });
+      elements.characterSheetTabs.appendChild(addNpcButton);
     }
   }
 
@@ -453,7 +476,9 @@ function renderCharacterSheet() {
   if (elements.characterSheetImport) elements.characterSheetImport.hidden = state.characterSheetSystemId !== 'coc';
   if (elements.characterSheetOwner) {
     const systemName = state.characterSheetSystemId === 'coc' ? 'クトゥルフ神話TRPG' : 'エモクロアTRPG';
-    elements.characterSheetOwner.textContent = sheet ? `${sheet.name || sheet.playerId} ・ ${systemName}` : '参加PCのシートがありません';
+    elements.characterSheetOwner.textContent = sheet
+      ? `${sheet.name || sheet.playerId} ・ ${sheet.role === 'npc' ? 'NPC' : 'PC'} ・ ${systemName}`
+      : 'キャラクターシートがありません';
   }
   elements.characterSheetFields.innerHTML = '';
   elements.characterSheetForm.hidden = !sheet;
@@ -634,7 +659,7 @@ function renderSkillRollButtons() {
   if (!elements.skillRollList || !elements.skillRollSection) return;
   elements.skillRollList.innerHTML = '';
   const sheets = state.currentRole === 'gm'
-    ? []
+    ? state.characterSheets.filter((sheet) => sheet.role === 'npc')
     : state.characterSheets.filter((sheet) => sheet.playerId === state.playerId);
   let skillCount = 0;
   sheets.forEach((sheet) => {
@@ -853,9 +878,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     : characterLayers.filter((asset) => asset.assignedPlayerId && asset.assignedPlayerId === state.playerId);
   const bgmLayers = state.boardAssets.filter((asset) => asset.category === 'bgm');
   if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || imageLayers.length === 0;
-  elements.characterLayerBox.hidden = state.currentRole === 'gm'
-    ? !state.showLayerBoxes || characterLayers.length === 0
-    : state.currentRole !== 'pc' || !state.showLayerBoxes || visibleCharacterLayers.length === 0;
+  elements.characterLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || characterLayers.length === 0;
   elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || bgmLayers.length === 0;
   renderCharacterStatuses();
   const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
@@ -1310,9 +1333,23 @@ async function uploadAssets() {
 
 function updateLayerBoxToggleButton() {
   if (!elements.layerBoxToggle) return;
-  elements.layerBoxToggle.hidden = !['gm', 'pc'].includes(state.currentRole);
+  elements.layerBoxToggle.hidden = state.currentRole !== 'gm';
   elements.layerBoxToggle.textContent = state.showLayerBoxes ? 'レイヤーを非表示' : 'レイヤーを表示';
   elements.layerBoxToggle.setAttribute('aria-pressed', String(state.showLayerBoxes));
+}
+
+function switchLeftSidebarTab(tab) {
+  const showLayers = tab === 'layers' && state.currentRole === 'gm';
+  if (elements.pcSidebarPanel) elements.pcSidebarPanel.hidden = showLayers;
+  if (elements.layerSidebarPanel) elements.layerSidebarPanel.hidden = !showLayers;
+  if (elements.pcSidebarTab) {
+    elements.pcSidebarTab.classList.toggle('is-active', !showLayers);
+    elements.pcSidebarTab.setAttribute('aria-selected', String(!showLayers));
+  }
+  if (elements.layerSidebarTab) {
+    elements.layerSidebarTab.classList.toggle('is-active', showLayers);
+    elements.layerSidebarTab.setAttribute('aria-selected', String(showLayers));
+  }
 }
 
 function enterRoom(result, role) {
@@ -1326,6 +1363,8 @@ function enterRoom(result, role) {
   state.currentRole = role;
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
+  if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
+  switchLeftSidebarTab('pc');
   updateLayerBoxToggleButton();
   if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
   if (elements.assetCategory) {
@@ -1365,7 +1404,6 @@ function enterRoom(result, role) {
   if (elements.assetUpload) elements.assetUpload.hidden = !result.r2Configured;
   if (elements.secretDiceOption) elements.secretDiceOption.hidden = role !== 'gm';
   if (elements.diceActorOption) elements.diceActorOption.hidden = role !== 'gm';
-  if (elements.npcForm) elements.npcForm.hidden = role !== 'gm';
   renderMembers(state.currentMembers);
   loadCharacterSheets();
   if (role !== 'gm' && elements.secretDiceInput) elements.secretDiceInput.checked = false;
@@ -1494,22 +1532,6 @@ if (elements.roomList) {
   });
 }
 
-if (elements.npcForm) {
-  elements.npcForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const name = elements.npcName?.value.trim();
-    if (!name || state.currentRole !== 'gm') return;
-    socket.emit('add-npc', { name }, (result) => {
-      if (!result?.ok) {
-        setStatus(result?.error || 'NPCを追加できませんでした');
-        return;
-      }
-      elements.npcName.value = '';
-      setStatus('NPCを追加しました');
-    });
-  });
-}
-
 if (elements.messageForm) {
   elements.messageForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -1619,6 +1641,9 @@ elements.playAreaTabs?.forEach((tab) => {
   });
 });
 
+elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
+elements.layerSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('layers'));
+
 elements.layerBoxToggle?.addEventListener('click', () => {
   state.showLayerBoxes = !state.showLayerBoxes;
   updateLayerBoxToggleButton();
@@ -1645,6 +1670,7 @@ socket.on('members', (members) => {
   if (state.currentRole === 'gm') loadCharacterSheets();
 });
 socket.on('character-status-updated', (status) => {
+  if (!status?.playerId) return;
   const existing = state.characterStatuses.find((item) => item.playerId === status.playerId);
   if (existing) Object.assign(existing, status);
   else state.characterStatuses.push(status);
@@ -1899,9 +1925,6 @@ const enableLayerBoxDragging = (box, handle, handleSelector = '') => {
   });
 };
 
-enableLayerBoxDragging(elements.layerBox, elements.layerBoxHandle);
-enableLayerBoxDragging(elements.characterLayerBox, elements.characterLayerBoxHandle);
-enableLayerBoxDragging(elements.bgmLayerBox, elements.bgmLayerBoxHandle);
 enableLayerBoxDragging(elements.characterStatusBoxes, elements.characterStatusBoxes, '.character-status-card h3');
 
 const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLayerArrangeTools].filter(Boolean);

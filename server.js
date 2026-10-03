@@ -281,13 +281,40 @@ loadPersistedRooms();
 
 function broadcastMembers(id) {
   const room = getRoom(id);
-  io.to(`room:${id}`).emit('members', [...room.members.values(), ...room.npcs.values()]);
+  const publicNpcs = [...room.npcs.values()].map(({ id: npcId, name, role }) => ({ id: npcId, name, role }));
+  io.to(`room:${id}`).emit('members', [...room.members.values(), ...publicNpcs]);
+}
+function getNpcCharacterSheet(npc, systemId) {
+  const values = { ...createEmptyCharacterSheet(systemId), ...(npc.values || {}) };
+  if (!npc.values) {
+    ['hp', 'san', 'luck'].forEach((field) => {
+      if (npc[field] !== undefined && npc[field] !== null) values[field] = String(npc[field]);
+    });
+  }
+  if (!values.characterName) values.characterName = npc.name;
+  return values;
 }
 function getCharacterStatus(room, playerId) {
+  const npc = room.npcs.get(playerId);
+  if (npc) {
+    const values = getNpcCharacterSheet(npc, room.systemId);
+    return {
+      playerId,
+      role: 'npc',
+      name: npc.name,
+      characterName: values.characterName,
+      hp: values.hp,
+      san: values.san,
+      luck: values.luck,
+      statsVisibleToPlayers: npc.statsVisibleToPlayers !== false
+    };
+  }
   const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
   return {
     playerId,
+    role: 'pc',
     name: room.players.get(playerId)?.name || playerId,
+    characterName: values.characterName || '',
     hp: values.hp,
     san: values.san,
     luck: values.luck
@@ -296,18 +323,42 @@ function getCharacterStatus(room, playerId) {
 function adjustCharacterStatus(room, playerId, field, delta) {
   const limits = { hp: 100000, san: 99, luck: 99 };
   if (!Object.prototype.hasOwnProperty.call(limits, field) || !Number.isInteger(delta) || Math.abs(delta) !== 1) return null;
-  const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
+  const npc = room.npcs.get(playerId);
+  if (!npc && !room.players.has(playerId)) return null;
+  const values = npc
+    ? getNpcCharacterSheet(npc, room.systemId)
+    : room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
   const current = Number(values[field]) || 0;
   values[field] = String(Math.max(0, Math.min(limits[field], current + delta)));
-  room.characterSheets.set(playerId, values);
+  if (npc) npc.values = values;
+  else room.characterSheets.set(playerId, values);
   touchRoom(room);
   return values;
 }
-function getOnlineCharacterStatuses(room) {
+function normalizeNpcStatusValue(value, maximum) {
+  if (value === undefined || value === null || String(value).trim() === '') return '';
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 && number <= maximum ? String(number) : null;
+}
+function getOnlineCharacterStatuses(room, viewerRole) {
+  if (room.systemId !== 'coc') return [];
   const playerIds = new Set([...room.members.values()]
     .filter((member) => member.role === 'pc' && member.playerId)
     .map((member) => member.playerId));
-  return [...playerIds].map((playerId) => getCharacterStatus(room, playerId));
+  const statuses = [
+    ...[...playerIds].map((playerId) => getCharacterStatus(room, playerId)),
+    ...[...room.npcs.keys()].map((npcId) => getCharacterStatus(room, npcId))
+  ];
+  return statuses.map((status) => status.role === 'npc' && viewerRole !== 'gm' && !status.statsVisibleToPlayers
+    ? { ...status, hp: '', san: '', luck: '', statsHidden: true }
+    : status);
+}
+function broadcastCharacterStatus(roomId, room, characterId) {
+  if (room.systemId !== 'coc') return;
+  room.members.forEach((member, socketId) => {
+    io.to(socketId).emit('character-status-updated', getOnlineCharacterStatuses(room, member.role)
+      .find((status) => status.playerId === characterId));
+  });
 }
 function canSeeMessage(message, member) {
   if (message.scope !== 'private') return true;
@@ -375,7 +426,7 @@ io.on('connection', (socket) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     if (!room || !socket.data.member) { acknowledge?.({ ok: false, error: 'ルームに参加していません。' }); return; }
-    acknowledge?.({ ok: true, systemId: room.systemId, statuses: getOnlineCharacterStatuses(room) });
+    acknowledge?.({ ok: true, systemId: room.systemId, statuses: getOnlineCharacterStatuses(room, socket.data.member.role) });
   });
 
   socket.on('get-character-sheets', (_payload, acknowledge) => {
@@ -386,9 +437,15 @@ io.on('connection', (socket) => {
     const playerIds = member.role === 'gm' ? [...room.players.keys()] : [member.playerId];
     const sheets = playerIds.map((playerId) => ({
       playerId,
+      role: 'pc',
       name: room.players.get(playerId)?.name || playerId,
       values: room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId)
     }));
+    if (member.role === 'gm') {
+      [...room.npcs.values()].forEach((npc) => {
+        sheets.push({ playerId: npc.id, role: 'npc', name: npc.name, values: getNpcCharacterSheet(npc, room.systemId) });
+      });
+    }
     acknowledge?.({ ok: true, systemId: room.systemId, fields: characterSheetFields[room.systemId], sheets });
   });
 
@@ -396,24 +453,38 @@ io.on('connection', (socket) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const member = socket.data.member;
-    if (!room || !member || typeof playerId !== 'string' || !room.players.has(playerId)) {
+    const npc = room?.npcs.get(playerId);
+    const isPc = typeof playerId === 'string' && room?.players.has(playerId);
+    if (!room || !member || typeof playerId !== 'string' || (!npc && !isPc)) {
       acknowledge?.({ ok: false, error: 'キャラクターシートまたは参加者を確認できません。' });
       return;
     }
-    if (member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+    if (npc ? member.role !== 'gm' : member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
       acknowledge?.({ ok: false, error: 'このキャラクターシートを編集する権限がありません。' });
       return;
     }
     const sheet = normalizeCharacterSheet(room.systemId, values);
-    room.characterSheets.set(playerId, sheet);
+    if (npc) {
+      npc.values = sheet;
+      npc.name = cleanText(sheet.characterName, 40) || npc.name;
+    } else {
+      room.characterSheets.set(playerId, sheet);
+    }
     touchRoom(room);
-    const update = { playerId, values: sheet, name: room.players.get(playerId)?.name || playerId };
-    room.members.forEach((recipient) => {
-      if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
-        io.to(recipient.id).emit('character-sheet-updated', update);
-      }
-    });
-    io.to(`room:${id}`).emit('character-status-updated', getCharacterStatus(room, playerId));
+    const update = { playerId, role: npc ? 'npc' : 'pc', values: sheet, name: npc?.name || room.players.get(playerId)?.name || playerId };
+    if (npc) {
+      room.members.forEach((recipient) => {
+        if (recipient.role === 'gm') io.to(recipient.id).emit('character-sheet-updated', update);
+      });
+      broadcastMembers(id);
+    } else {
+      room.members.forEach((recipient) => {
+        if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
+          io.to(recipient.id).emit('character-sheet-updated', update);
+        }
+      });
+    }
+    broadcastCharacterStatus(id, room, playerId);
     acknowledge?.({ ok: true, ...update });
   });
 
@@ -421,11 +492,13 @@ io.on('connection', (socket) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const member = socket.data.member;
-    if (!room || !member || room.systemId !== 'coc' || !room.players.has(playerId)) {
+    const isNpc = room?.npcs.has(playerId);
+    const isPlayer = room?.players.has(playerId);
+    if (!room || !member || room.systemId !== 'coc' || (!isNpc && !isPlayer)) {
       acknowledge?.({ ok: false, error: 'キャラクターまたはステータスを確認できません。' });
       return;
     }
-    if (member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+    if (isNpc ? member.role !== 'gm' : member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
       acknowledge?.({ ok: false, error: 'このキャラクターのステータスを変更する権限がありません。' });
       return;
     }
@@ -434,15 +507,31 @@ io.on('connection', (socket) => {
       acknowledge?.({ ok: false, error: '変更するステータスまたは増減値が不正です。' });
       return;
     }
-    const update = { playerId, values, name: room.players.get(playerId)?.name || playerId };
-    room.members.forEach((recipient) => {
-      if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
-        io.to(recipient.id).emit('character-sheet-updated', update);
-      }
-    });
+    if (!isNpc) {
+      const update = { playerId, values, name: room.players.get(playerId)?.name || playerId };
+      room.members.forEach((recipient) => {
+        if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
+          io.to(recipient.id).emit('character-sheet-updated', update);
+        }
+      });
+    }
     const status = getCharacterStatus(room, playerId);
-    io.to(`room:${id}`).emit('character-status-updated', status);
+    broadcastCharacterStatus(id, room, playerId);
     acknowledge?.({ ok: true, status });
+  });
+
+  socket.on('set-npc-status-visibility', ({ npcId, visible } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const npc = room?.npcs.get(npcId);
+    if (!room || socket.data.member?.role !== 'gm' || !npc || typeof visible !== 'boolean') {
+      acknowledge?.({ ok: false, error: 'NPCのステータス公開設定を更新できません。' });
+      return;
+    }
+    npc.statsVisibleToPlayers = visible;
+    touchRoom(room);
+    broadcastCharacterStatus(id, room, npcId);
+    acknowledge?.({ ok: true });
   });
 
   socket.on('create-room', ({ systemId, roomTitle, name } = {}, acknowledge) => {
@@ -470,13 +559,27 @@ io.on('connection', (socket) => {
   socket.on('add-npc', ({ name } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
-    const npcName = cleanText(name, 40);
-    if (!room || socket.data.member?.role !== 'gm' || !npcName) { acknowledge?.({ ok: false, error: 'GMのみNPCを追加できます。' }); return; }
-    if ([...room.npcs.values()].some((npc) => npc.name === npcName)) { acknowledge?.({ ok: false, error: '同じ名前のNPCがすでに存在します。' }); return; }
-    const npc = { id: `npc-${crypto.randomUUID()}`, name: npcName, role: 'npc' };
+    if (!room || socket.data.member?.role !== 'gm') { acknowledge?.({ ok: false, error: 'GMのみNPCを追加できます。' }); return; }
+    let npcName = cleanText(name, 40);
+    if (!npcName) {
+      let npcNumber = 1;
+      do { npcName = `NPC ${npcNumber++}`; }
+      while ([...room.npcs.values()].some((npc) => npc.name === npcName));
+    } else if ([...room.npcs.values()].some((npc) => npc.name === npcName)) {
+      acknowledge?.({ ok: false, error: '同じ名前のNPCがすでに存在します。' });
+      return;
+    }
+    const npc = {
+      id: `npc-${crypto.randomUUID()}`,
+      name: npcName,
+      role: 'npc',
+      values: { ...createEmptyCharacterSheet(room.systemId), characterName: npcName },
+      statsVisibleToPlayers: true
+    };
     room.npcs.set(npc.id, npc);
     touchRoom(room);
     broadcastMembers(id);
+    broadcastCharacterStatus(id, room, npc.id);
     acknowledge?.({ ok: true, npc });
   });
 
@@ -862,9 +965,10 @@ io.on('connection', (socket) => {
     let actor = member.role === 'gm' && actorId ? room.npcs.get(actorId) : member;
     let skillRoll = null;
     if (skillName || skillPlayerId) {
+      const npc = room.npcs.get(skillPlayerId);
       const player = room.players.get(skillPlayerId);
       const target = Number(skillValue);
-      const savedSheet = room.characterSheets.get(skillPlayerId) || {};
+      const savedSheet = npc ? getNpcCharacterSheet(npc, room.systemId) : room.characterSheets.get(skillPlayerId) || {};
       const normalizedSkillName = cleanText(skillName, 60);
       const savedSkills = savedSheet.skills || '';
       const savedSkill = savedSkills.split(/\r?\n/).map(parseCharacterSkillLine)
@@ -877,9 +981,11 @@ io.on('connection', (socket) => {
             ? { name: normalizedSkillName, target }
             : null
           : null);
-      const canRollSkill = member.role === 'gm' || (member.role === 'pc' && member.playerId === skillPlayerId);
-      if (!canRollSkill || !player || !savedSkill || diceSides !== 100 || diceCount !== 1) return;
-      actor = player;
+      const canRollSkill = npc
+        ? member.role === 'gm'
+        : member.role === 'gm' || (member.role === 'pc' && member.playerId === skillPlayerId);
+      if (!canRollSkill || (!player && !npc) || !savedSkill || diceSides !== 100 || diceCount !== 1) return;
+      actor = npc || player;
       skillRoll = savedSkill;
     }
     if (!actor) return;
