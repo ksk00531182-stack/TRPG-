@@ -23,7 +23,6 @@ const elements = {
   roomList: $('#roomList'),
   chatTab: $('#chatTab'),
   diceTab: $('#diceTab'),
-  membersTab: $('#membersTab'),
   memoTab: $('#memoTab'),
   chatPanel: $('#chatPanel'),
   dicePanel: $('#dicePanel'),
@@ -35,7 +34,6 @@ const elements = {
   skillRollList: $('#skillRollList'),
   npcForm: $('#npcForm'),
   npcName: $('#npcName'),
-  membersPanel: $('#membersPanel'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
   roomLabel: $('#roomLabel'),
@@ -1434,23 +1432,18 @@ if (elements.roomLibrary) {
 function switchSessionTab(tab) {
   const showChat = tab === 'chat';
   const showDice = tab === 'dice';
-  const showMembers = tab === 'members';
   elements.chatPanel.hidden = !showChat;
   elements.dicePanel.hidden = !showDice;
-  elements.membersPanel.hidden = !showMembers;
   elements.memoPanel.hidden = tab !== 'memo';
   elements.chatTab.classList.toggle('is-active', showChat);
   elements.diceTab.classList.toggle('is-active', showDice);
-  elements.membersTab.classList.toggle('is-active', showMembers);
   elements.memoTab.classList.toggle('is-active', tab === 'memo');
   elements.chatTab.setAttribute('aria-selected', String(showChat));
   elements.diceTab.setAttribute('aria-selected', String(showDice));
-  elements.membersTab.setAttribute('aria-selected', String(showMembers));
   elements.memoTab.setAttribute('aria-selected', String(tab === 'memo'));
 }
 elements.chatTab?.addEventListener('click', () => switchSessionTab('chat'));
 elements.diceTab?.addEventListener('click', () => switchSessionTab('dice'));
-elements.membersTab?.addEventListener('click', () => switchSessionTab('members'));
 elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
 
 elements.dicePanel?.addEventListener('click', (event) => {
@@ -1872,9 +1865,10 @@ if (elements.bgmLayerBox) {
   });
 }
 
-const enableLayerBoxDragging = (box, handle) => {
+const enableLayerBoxDragging = (box, handle, handleSelector = '') => {
   if (!box || !handle || !elements.playArea) return;
   handle.addEventListener('pointerdown', (event) => {
+    if (handleSelector && !event.target.closest(handleSelector)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     handle.setPointerCapture(event.pointerId);
@@ -1908,6 +1902,7 @@ const enableLayerBoxDragging = (box, handle) => {
 enableLayerBoxDragging(elements.layerBox, elements.layerBoxHandle);
 enableLayerBoxDragging(elements.characterLayerBox, elements.characterLayerBoxHandle);
 enableLayerBoxDragging(elements.bgmLayerBox, elements.bgmLayerBoxHandle);
+enableLayerBoxDragging(elements.characterStatusBoxes, elements.characterStatusBoxes, '.character-status-card h3');
 
 const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLayerArrangeTools].filter(Boolean);
 layerArrangeToolsets.forEach((tools) => {

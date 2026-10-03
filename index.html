@@ -27,6 +27,13 @@
     <section class="room" id="room" hidden>
       <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
       <div class="room-grid">
+        <aside class="left-sidebar">
+          <section id="membersPanel" class="members-panel panel" aria-labelledby="membersHeading">
+            <header class="members-heading"><p class="eyebrow">TABLE</p><h3 id="membersHeading">参加者</h3></header>
+            <form id="npcForm" class="npc-form" hidden><input id="npcName" maxlength="40" placeholder="NPC名" required><button type="submit">NPCを追加</button></form>
+            <ul id="memberList"></ul>
+          </section>
+        </aside>
         <main class="play-area" aria-label="プレイエリア">
           <div class="board-viewport">
             <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
@@ -69,7 +76,6 @@
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
             <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
             <button id="diceTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="dicePanel">ダイスロール</button>
-            <button id="membersTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="membersPanel">参加者</button>
             <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
           </div>
           <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
@@ -93,10 +99,6 @@
               <h3>技能判定</h3>
               <div id="skillRollList" class="skill-roll-list"></div>
             </section>
-          </div>
-          <div id="membersPanel" class="tab-panel" role="tabpanel" aria-labelledby="membersTab" hidden>
-            <form id="npcForm" class="npc-form" hidden><input id="npcName" maxlength="40" placeholder="NPC名" required><button type="submit">NPCを追加</button></form>
-            <ul id="memberList"></ul>
           </div>
           <div id="memoPanel" class="tab-panel" role="tabpanel" aria-labelledby="memoTab" hidden>
             <textarea id="memoInput" class="memo-input" placeholder="自由にメモを入力..."></textarea>
