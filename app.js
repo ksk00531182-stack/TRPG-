@@ -709,7 +709,7 @@ function renderAssets(assets) {
       img.src = asset.url;
       img.alt = asset.name || '';
       img.loading = 'lazy';
-          if (canManageLayerAssets(groupAssets)) {
+        if (canManageLayerAssets([asset])) {
         const placeButton = document.createElement('button');
         placeButton.type = 'button';
         placeButton.className = 'asset-place';
