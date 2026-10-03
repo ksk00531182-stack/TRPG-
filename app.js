@@ -50,6 +50,7 @@ const elements = {
   playArea: document.querySelector('.play-area'),
   boardAssets: $('#boardAssets'),
   characterBoardAssets: $('#characterBoardAssets'),
+  boardDifferenceMenu: $('#boardDifferenceMenu'),
   layerBox: $('#layerBox'),
   characterLayerBox: $('#characterLayerBox'),
   bgmLayerBox: $('#bgmLayerBox'),
@@ -69,7 +70,6 @@ const elements = {
   layerSidebarPanel: $('#layerSidebarPanel'),
   characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
-  layerBoxToggle: $('#layerBoxToggle'),
   characterSheetButton: $('#characterSheetButton'),
   characterSheetDialog: $('#characterSheetDialog'),
   characterSheetClose: $('#characterSheetClose'),
@@ -99,7 +99,6 @@ const state = {
   collapsedGroupIds: new Set(),
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
-  showLayerBoxes: true,
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
@@ -854,6 +853,7 @@ function playBgm(player, startedAt = Date.now(), offset = 0) {
 
 function renderBoardAssets(boardAssets = state.boardAssets) {
   if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.bgmLayerBox) return;
+  if (elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   const activeBgmIds = new Set(state.boardAssets.filter((asset) => asset.category === 'bgm').map((asset) => asset.id));
   state.bgmPlayers.forEach((player, assetId) => {
@@ -877,22 +877,23 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     ? characterLayers
     : characterLayers.filter((asset) => asset.assignedPlayerId && asset.assignedPlayerId === state.playerId);
   const bgmLayers = state.boardAssets.filter((asset) => asset.category === 'bgm');
-  if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || imageLayers.length === 0;
-  elements.characterLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || characterLayers.length === 0;
-  elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || !state.showLayerBoxes || bgmLayers.length === 0;
+  if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || imageLayers.length === 0;
+  elements.characterLayerBox.hidden = state.currentRole !== 'gm' || characterLayers.length === 0;
+  elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || bgmLayers.length === 0;
   renderCharacterStatuses();
   const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
   const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
   const canOperateSelectedAssets = selectedAssets.length >= 2 && selectedCategories.size === 1 && canManageLayerAssets(selectedAssets);
   const selectedCharacters = canOperateSelectedAssets && selectedCategories.has('characters');
   const selectedMaterials = state.currentRole === 'gm' && selectedAssets.length >= 2
-    && !selectedCategories.has('characters') && !selectedCategories.has('bgm');
+    && selectedCategories.size === 1 && !selectedCategories.has('characters') && !selectedCategories.has('bgm');
   if (elements.layerGroupForm) elements.layerGroupForm.hidden = !selectedMaterials;
   if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = !canOperateSelectedAssets || selectedCategories.has('characters') || selectedCategories.has('bgm');
   if (elements.characterLayerGroupForm) elements.characterLayerGroupForm.hidden = !selectedCharacters;
   if (elements.characterLayerArrangeTools) elements.characterLayerArrangeTools.hidden = !selectedCharacters;
 
   state.boardAssets.forEach((placedAsset, index) => {
+    if (placedAsset.differenceSetId && !placedAsset.differenceActive) return;
     const asset = state.assets.find((item) => item.key === placedAsset.key);
     if (!asset?.url) {
       if (placedAsset.category === 'bgm') stopBgm(state.bgmPlayers.get(placedAsset.id));
@@ -928,6 +929,13 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     image.title = `${image.alt}（${placedAsset.placedBy || ''}）`;
     image.draggable = false;
     object.appendChild(image);
+    object.addEventListener('contextmenu', (event) => {
+      if (!placedAsset.differenceSetId) return;
+      const differenceAssets = state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId);
+      if (differenceAssets.length < 2 || !canManageLayerAssets(differenceAssets)) return;
+      event.preventDefault();
+      showBoardDifferenceMenu(event, placedAsset, differenceAssets);
+    });
     if (canEditBoardAsset && !placedAsset.locked) {
       object.addEventListener('pointerdown', (event) => {
         if (event.target.closest('.bounding-handle')) return;
@@ -1047,7 +1055,9 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           groupMarker.type = 'button';
           groupMarker.className = 'layer-group-toggle';
           groupMarker.textContent = groupCollapsed ? '▸' : '▾';
-          groupMarker.title = groupCollapsed ? 'グループを展開' : 'グループを折りたたむ';
+          groupMarker.title = placedAsset.differenceSetId
+            ? groupCollapsed ? '差分一覧を展開' : '差分一覧を折りたたむ'
+            : groupCollapsed ? 'グループを展開' : 'グループを折りたたむ';
           groupMarker.setAttribute('aria-label', groupMarker.title);
           groupMarker.setAttribute('aria-expanded', String(!groupCollapsed));
           groupMarker.addEventListener('click', () => {
@@ -1057,7 +1067,9 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           });
           const groupName = document.createElement('strong');
           groupName.className = 'layer-group-name';
-          groupName.textContent = placedAsset.groupName || 'グループ';
+          groupName.textContent = placedAsset.differenceSetId
+            ? `差分: ${placedAsset.groupName || '差分セット'}`
+            : placedAsset.groupName || 'グループ';
           const groupCount = document.createElement('small');
           groupCount.className = 'layer-group-count';
           groupCount.textContent = String(groupAssets.length);
@@ -1065,11 +1077,18 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           if (canManageLayerAssets(groupAssets)) {
             const controls = document.createElement('div');
             controls.className = 'layer-controls';
-            [
-              ['toggle-group-visibility', groupAssets.every((asset) => asset.groupVisible !== false) ? '👁' : '○', 'グループ表示切り替え', { visible: groupAssets.some((asset) => asset.groupVisible === false) }],
-              ['toggle-group-lock', groupAssets.every((asset) => asset.locked) ? '🔒' : '🔓', 'グループロック切り替え', { locked: !groupAssets.every((asset) => asset.locked) }],
-              ['ungroup', '解除', 'グループ解除', {}]
-            ].forEach(([action, label, title, values]) => {
+            const groupActions = placedAsset.differenceSetId
+              ? [
+                ['toggle-group-visibility', groupAssets.every((asset) => asset.groupVisible !== false) ? '👁' : '○', '差分表示切り替え', { visible: groupAssets.some((asset) => asset.groupVisible === false) }],
+                ['toggle-group-lock', groupAssets.every((asset) => asset.locked) ? '🔒' : '🔓', '差分ロック切り替え', { locked: !groupAssets.every((asset) => asset.locked) }],
+                ['ungroup', '解除', '差分登録を解除', {}]
+              ]
+              : [
+                ['toggle-group-visibility', groupAssets.every((asset) => asset.groupVisible !== false) ? '👁' : '○', 'グループ表示切り替え', { visible: groupAssets.some((asset) => asset.groupVisible === false) }],
+                ['toggle-group-lock', groupAssets.every((asset) => asset.locked) ? '🔒' : '🔓', 'グループロック切り替え', { locked: !groupAssets.every((asset) => asset.locked) }],
+                ['ungroup', '解除', 'グループ解除', {}]
+              ];
+            groupActions.forEach(([action, label, title, values]) => {
               const button = document.createElement('button');
               button.type = 'button';
               button.className = `${action.includes('lock') ? 'layer-lock' : ''}${action.includes('lock') && groupAssets.every((asset) => asset.locked) ? ' is-locked' : ''}`;
@@ -1087,7 +1106,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         }
       }
       const row = document.createElement('li');
-      row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
+      row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.differenceActive ? ' is-difference-active' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
       row.hidden = Boolean(activeGroupId && state.collapsedGroupIds.has(activeGroupId));
       row.dataset.assetId = placedAsset.id;
       const canManagePlacedAsset = canManageLayerAssets([placedAsset]);
@@ -1211,6 +1230,43 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
   });
 }
 
+function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
+  const menu = elements.boardDifferenceMenu;
+  if (!menu || !elements.playArea) return;
+  menu.innerHTML = '';
+  differenceAssets.forEach((differenceAsset) => {
+    const asset = state.assets.find((item) => item.key === differenceAsset.key);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'board-difference-option';
+    button.setAttribute('role', 'menuitemradio');
+    button.setAttribute('aria-checked', String(differenceAsset.id === placedAsset.id));
+    if (asset?.url && asset.type?.startsWith('image/')) {
+      const thumbnail = document.createElement('img');
+      thumbnail.src = asset.url;
+      thumbnail.alt = '';
+      button.appendChild(thumbnail);
+    }
+    const label = document.createElement('span');
+    label.textContent = differenceAsset.name || asset?.name || '差分';
+    button.appendChild(label);
+    button.addEventListener('click', () => {
+      menu.hidden = true;
+      if (differenceAsset.id === placedAsset.id) return;
+      socket.emit('select-board-difference', { differenceSetId: placedAsset.differenceSetId, assetId: differenceAsset.id }, (result) => {
+        if (!result?.ok) setStatus(result?.error || '差分を切り替えられませんでした');
+      });
+    });
+    menu.appendChild(button);
+  });
+  const bounds = elements.playArea.getBoundingClientRect();
+  menu.hidden = false;
+  const left = Math.max(8, Math.min(bounds.width - menu.offsetWidth - 8, event.clientX - bounds.left));
+  const top = Math.max(8, Math.min(bounds.height - menu.offsetHeight - 8, event.clientY - bounds.top));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 function editLayerLabel(labelElement, target) {
   const targetAssets = target.groupId
     ? state.boardAssets.filter((asset) => asset.groupId === target.groupId)
@@ -1331,13 +1387,6 @@ async function uploadAssets() {
   }
 }
 
-function updateLayerBoxToggleButton() {
-  if (!elements.layerBoxToggle) return;
-  elements.layerBoxToggle.hidden = state.currentRole !== 'gm';
-  elements.layerBoxToggle.textContent = state.showLayerBoxes ? 'レイヤーを非表示' : 'レイヤーを表示';
-  elements.layerBoxToggle.setAttribute('aria-pressed', String(state.showLayerBoxes));
-}
-
 function switchLeftSidebarTab(tab) {
   const showLayers = tab === 'layers' && state.currentRole === 'gm';
   if (elements.pcSidebarPanel) elements.pcSidebarPanel.hidden = showLayers;
@@ -1365,7 +1414,6 @@ function enterRoom(result, role) {
   state.characterStatuses = [];
   if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
   switchLeftSidebarTab('pc');
-  updateLayerBoxToggleButton();
   if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
   if (elements.assetCategory) {
     if (role === 'pc') elements.assetCategory.value = 'characters';
@@ -1643,12 +1691,6 @@ elements.playAreaTabs?.forEach((tab) => {
 
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
 elements.layerSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('layers'));
-
-elements.layerBoxToggle?.addEventListener('click', () => {
-  state.showLayerBoxes = !state.showLayerBoxes;
-  updateLayerBoxToggleButton();
-  renderBoardAssets();
-});
 
 elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
@@ -1944,7 +1986,8 @@ layerArrangeToolsets.forEach((tools) => {
 });
 
 elements.playArea?.addEventListener('click', (event) => {
-  if (event.target.closest('.board-object, .play-area-tools, .layer-box, .character-layer-box, .bgm-layer-box')) return;
+  if (!event.target.closest('.board-difference-menu') && elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
+  if (event.target.closest('.board-object, .board-difference-menu, .play-area-tools, .layer-box, .character-layer-box, .bgm-layer-box')) return;
   if (!state.selectedLayerIds.size && !state.selectedBoardAssetId) return;
   state.selectedLayerIds.clear();
   state.selectedBoardAssetId = '';
@@ -1960,24 +2003,28 @@ layerGroupForms.forEach(([form, nameInput]) => {
     event.preventDefault();
     const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
     if (selectedAssets.length < 2 || !canManageLayerAssets(selectedAssets)) {
-      setStatus('グループ化するレイヤーを2つ以上選択してください');
+      setStatus('差分登録する画像を2つ以上選択してください');
       return;
     }
     const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
-    if (selectedCategories.has('bgm') || (selectedCategories.has('characters') && selectedCategories.size > 1)) {
-      setStatus('キャラクターと他の素材は同じグループにできません。BGMはグループ化できません');
+    const assignedPlayers = new Set(selectedAssets.map((asset) => asset.assignedPlayerId || ''));
+    if (selectedCategories.size !== 1 || selectedCategories.has('bgm') || assignedPlayers.size !== 1
+      || selectedAssets.some((asset) => asset.differenceSetId)) {
+      setStatus('同じカテゴリ・同じ担当の未登録画像を選択してください。BGMは差分登録できません');
       return;
     }
-    const existingNames = new Set(state.boardAssets.map((asset) => asset.groupName).filter(Boolean));
-    let groupNumber = 1;
-    while (existingNames.has(`グループ${groupNumber}`)) groupNumber += 1;
-    const groupName = nameInput?.value.trim() || `グループ${groupNumber}`;
-    socket.emit('update-board-asset', { action: 'group', assetIds: [...state.selectedLayerIds], groupName }, (result) => {
+    const existingNames = new Set(state.boardAssets.filter((asset) => asset.differenceSetId).map((asset) => asset.groupName).filter(Boolean));
+    let differenceNumber = 1;
+    while (existingNames.has(`差分${differenceNumber}`)) differenceNumber += 1;
+    const groupName = nameInput?.value.trim() || `差分${differenceNumber}`;
+    const selectedIds = [...state.selectedLayerIds];
+    socket.emit('update-board-asset', { action: 'register-differences', assetIds: selectedIds, groupName }, (result) => {
       if (!result?.ok) {
-        setStatus(result?.error || 'グループを作成できませんでした');
+        setStatus(result?.error || '差分を登録できませんでした');
         return;
       }
       state.selectedLayerIds.clear();
+      state.selectedBoardAssetId = result.boardAssets.find((asset) => selectedIds.includes(asset.id) && asset.differenceActive)?.id || '';
       if (nameInput) nameInput.value = '';
       renderBoardAssets(result.boardAssets);
     });

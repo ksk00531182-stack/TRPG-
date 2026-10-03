@@ -74,6 +74,18 @@ function canManageBoardAssets(member, assets) {
     && assets.every((asset) => asset.category === 'characters' && asset.assignedPlayerId === member.playerId);
 }
 
+function clearDifferenceRegistration(assets) {
+  assets.forEach((asset) => {
+    if (asset.differenceOriginalTransform) Object.assign(asset, asset.differenceOriginalTransform);
+    delete asset.differenceSetId;
+    delete asset.differenceActive;
+    delete asset.differenceOriginalTransform;
+    delete asset.groupId;
+    delete asset.groupName;
+    delete asset.groupVisible;
+  });
+}
+
 function createEmptyCharacterSheet(systemId) {
   return Object.fromEntries(characterSheetFields[systemId].map(([key]) => [key, '']));
 }
@@ -679,10 +691,17 @@ io.on('connection', (socket) => {
       acknowledge?.({ ok: false, error: '担当キャラクター以外は削除できません。' });
       return;
     }
-    const [{ groupId }] = room.boardAssets.splice(assetIndex, 1);
+    const [{ groupId, differenceSetId }] = room.boardAssets.splice(assetIndex, 1);
+    if (differenceSetId) {
+      const remainingDifferences = room.boardAssets.filter((asset) => asset.differenceSetId === differenceSetId);
+      if (remainingDifferences.length === 1) clearDifferenceRegistration(remainingDifferences);
+      else if (remainingDifferences.length && !remainingDifferences.some((asset) => asset.differenceActive)) {
+        remainingDifferences[0].differenceActive = true;
+      }
+    }
     if (groupId) {
       const remainingGroupAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
-      if (remainingGroupAssets.length === 1) {
+      if (remainingGroupAssets.length === 1 && !remainingGroupAssets[0].differenceSetId) {
         remainingGroupAssets.forEach((asset) => {
           delete asset.groupId;
           delete asset.groupName;
@@ -724,6 +743,39 @@ io.on('connection', (socket) => {
           asset.width = reference.width || 0.16;
           asset.height = reference.height || 0.19;
         }
+      });
+    } else if (action === 'register-differences') {
+      const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
+      const selectedAssets = selectedIds.map((selectedId) => room.boardAssets.find((asset) => asset.id === selectedId));
+      const categories = new Set(selectedAssets.filter(Boolean).map((asset) => asset.category));
+      const assignedPlayers = new Set(selectedAssets.filter(Boolean).map((asset) => asset.assignedPlayerId || ''));
+      if (selectedIds.length < 2 || selectedAssets.some((asset) => !asset || asset.differenceSetId) || categories.size !== 1
+        || categories.has('bgm') || assignedPlayers.size !== 1 || !canManageBoardAssets(member, selectedAssets)) {
+        acknowledge?.({ ok: false, error: '同じ素材カテゴリー・同じ担当の画像を2つ以上選択してください。' });
+        return;
+      }
+      const selectedSet = new Set(selectedIds);
+      const firstIndex = room.boardAssets.findIndex((asset) => selectedSet.has(asset.id));
+      const firstAsset = room.boardAssets[firstIndex];
+      const previousGroupIds = new Set(selectedAssets.map((asset) => asset.groupId).filter(Boolean));
+      room.boardAssets.filter((asset) => previousGroupIds.has(asset.groupId) && !selectedSet.has(asset.id)).forEach((asset) => {
+        delete asset.groupId;
+        delete asset.groupName;
+        delete asset.groupVisible;
+      });
+      const differenceSetId = crypto.randomUUID();
+      const differenceName = cleanText(groupName, 40) || `差分${room.boardAssets.filter((asset) => asset.differenceSetId).length + 1}`;
+      selectedAssets.forEach((asset, index) => {
+        asset.differenceOriginalTransform = { x: asset.x, y: asset.y, width: asset.width, height: asset.height };
+        asset.groupId = differenceSetId;
+        asset.groupName = differenceName;
+        asset.groupVisible = true;
+        asset.differenceSetId = differenceSetId;
+        asset.differenceActive = index === 0;
+        asset.x = firstAsset.x;
+        asset.y = firstAsset.y;
+        asset.width = firstAsset.width;
+        asset.height = firstAsset.height;
       });
     } else if (action === 'group') {
       const selectedIds = [...new Set(Array.isArray(assetIds) ? assetIds : [])];
@@ -767,11 +819,12 @@ io.on('connection', (socket) => {
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
       if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'グループを編集する権限がありません。' }); return; }
       if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
-      groupedAssets.forEach((asset) => {
-        delete asset.groupId;
-        delete asset.groupName;
-        delete asset.groupVisible;
-      });
+      if (groupedAssets.some((asset) => asset.differenceSetId)) clearDifferenceRegistration(groupedAssets);
+      else groupedAssets.forEach((asset) => {
+          delete asset.groupId;
+          delete asset.groupName;
+          delete asset.groupVisible;
+        });
     } else if (action === 'toggle-group-visibility' || action === 'toggle-group-lock') {
       if (!groupId) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
@@ -844,12 +897,17 @@ io.on('connection', (socket) => {
       const nextY = Number(y);
       const nextWidth = Number(width);
       const nextHeight = Number(height);
-      if (!canManageBoardAssets(member, [boardAsset])) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
-      if (boardAsset.locked || ![nextX, nextY, nextWidth, nextHeight].every(Number.isFinite)) { acknowledge?.({ ok: false, error: 'この画像はサイズ変更できません。' }); return; }
-      boardAsset.x = Math.max(0.03, Math.min(0.97, nextX));
-      boardAsset.y = Math.max(0.03, Math.min(0.97, nextY));
-      boardAsset.width = Math.max(0.04, Math.min(3, nextWidth));
-      boardAsset.height = Math.max(0.04, Math.min(3, nextHeight));
+      const resizedAssets = boardAsset.differenceSetId
+        ? room.boardAssets.filter((asset) => asset.differenceSetId === boardAsset.differenceSetId)
+        : [boardAsset];
+      if (!canManageBoardAssets(member, resizedAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
+      if (resizedAssets.some((asset) => asset.locked) || ![nextX, nextY, nextWidth, nextHeight].every(Number.isFinite)) { acknowledge?.({ ok: false, error: 'この画像はサイズ変更できません。' }); return; }
+      resizedAssets.forEach((asset) => {
+        asset.x = Math.max(0.03, Math.min(0.97, nextX));
+        asset.y = Math.max(0.03, Math.min(0.97, nextY));
+        asset.width = Math.max(0.04, Math.min(3, nextWidth));
+        asset.height = Math.max(0.04, Math.min(3, nextHeight));
+      });
     } else {
       if (action === 'toggle-lock') {
         const nextLocked = !boardAsset.locked;
@@ -877,6 +935,24 @@ io.on('connection', (socket) => {
     }
     }
 
+    touchRoom(room);
+    io.to(`room:${id}`).emit('board-assets', room.boardAssets);
+    acknowledge?.({ ok: true, boardAssets: room.boardAssets });
+  });
+
+  socket.on('select-board-difference', ({ differenceSetId, assetId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const member = socket.data.member;
+    const differenceAssets = room?.boardAssets.filter((asset) => asset.differenceSetId === differenceSetId) || [];
+    const selectedAsset = differenceAssets.find((asset) => asset.id === assetId);
+    if (!room || !member || differenceAssets.length < 2 || !selectedAsset
+      || !canManageBoardAssets(member, differenceAssets)
+      || differenceAssets.some((asset) => asset.locked)) {
+      acknowledge?.({ ok: false, error: 'この差分を変更する権限がないか、差分が見つかりません。' });
+      return;
+    }
+    differenceAssets.forEach((asset) => { asset.differenceActive = asset.id === selectedAsset.id; });
     touchRoom(room);
     io.to(`room:${id}`).emit('board-assets', room.boardAssets);
     acknowledge?.({ ok: true, boardAssets: room.boardAssets });
