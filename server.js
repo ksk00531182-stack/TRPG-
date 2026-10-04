@@ -58,6 +58,54 @@ const characterSheetFields = Object.freeze({
 function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
 function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
 function normalizePlayerId(value) { return typeof value === 'string' && /^[^\s]{1,40}$/.test(value.trim()) ? value.trim() : null; }
+function normalizeBoardLayoutSaves(saves) {
+  const ids = new Set();
+  return (Array.isArray(saves) ? saves : []).slice(-50).flatMap((save) => {
+    if (!Array.isArray(save?.boardAssets)) return [];
+    const name = cleanText(save.name, 60);
+    if (!name) return [];
+    let id = cleanText(save.id, 80);
+    if (!id || ids.has(id)) id = crypto.randomUUID();
+    ids.add(id);
+    return [{
+      id,
+      name,
+      boardAssets: save.boardAssets.filter((asset) => asset && asset.category !== 'bgm' && asset.category !== 'characters').map((asset) => ({ ...asset })),
+      createdAt: typeof save.createdAt === 'string' ? save.createdAt : new Date().toISOString()
+    }];
+  });
+}
+
+function getBoardLayoutSaveSummaries(room) {
+  return room.boardLayoutSaves.map(({ id, name, boardAssets, createdAt }) => ({
+    id,
+    name,
+    assetCount: boardAssets.length,
+    createdAt,
+    previewAssets: boardAssets.map(({ key, x, y, width, height, visible, groupVisible, differenceActive }) => ({
+      key, x, y, width, height, visible, groupVisible, differenceActive
+    }))
+  }));
+}
+
+function normalizeScenarioPages(value) {
+  const sourcePages = typeof value === 'string'
+    ? [{ title: 'シナリオ 1', content: value, contentFormat: 'text' }]
+    : Array.isArray(value) ? value : [];
+  let remainingLength = 30000;
+  const pageIds = new Set();
+  const pages = sourcePages.slice(0, 50).map((page, index) => {
+    const title = (cleanText(page?.title, 80) || `区切り ${index + 1}`).slice(0, remainingLength);
+    remainingLength -= title.length;
+    const content = (typeof page?.content === 'string' ? page.content : '').slice(0, remainingLength);
+    remainingLength -= content.length;
+    let id = cleanText(page?.id, 80);
+    if (!id || pageIds.has(id)) id = crypto.randomUUID();
+    pageIds.add(id);
+    return { id, title, content, contentFormat: page?.contentFormat === 'html' ? 'html' : 'text' };
+  });
+  return pages.length ? pages : [{ id: crypto.randomUUID(), title: 'シナリオ 1', content: '' }];
+}
 function parseDiceNotation(value) {
   const normalized = typeof value === 'string' ? value.normalize('NFKC').replace(/\s+/g, '') : '';
   const match = normalized.match(/^(\d+)[dD](\d+)(?:([+-])(\d+))?$/);
@@ -132,7 +180,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -146,6 +194,8 @@ function persistRooms() {
     npcs: [...room.npcs.entries()],
     assets: [...room.assets.entries()],
     boardAssets: room.boardAssets,
+    boardLayoutSaves: room.boardLayoutSaves,
+    scenario: normalizeScenarioPages(room.scenario),
     inviteToken: room.inviteToken,
     gmToken: room.gmToken,
     systemId: room.systemId,
@@ -163,6 +213,12 @@ function loadPersistedRooms() {
     let migrated = false;
     for (const savedRoom of savedRooms) {
       if (!normalizeRoomId(savedRoom.id) || !trpgSystems[savedRoom.systemId] || typeof savedRoom.inviteToken !== 'string') continue;
+      const storedBoardLayoutSaves = Array.isArray(savedRoom.boardLayoutSaves)
+        ? savedRoom.boardLayoutSaves
+        : Array.isArray(savedRoom.savedBoardAssets)
+          ? [{ id: crypto.randomUUID(), name: '以前のセーブ', boardAssets: savedRoom.savedBoardAssets, createdAt: savedRoom.updatedAt }]
+          : [];
+      migrated ||= !Array.isArray(savedRoom.boardLayoutSaves) && Array.isArray(savedRoom.savedBoardAssets);
       const gmToken = savedRoom.gmToken || crypto.randomBytes(32).toString('hex');
       migrated ||= !savedRoom.gmToken;
       rooms.set(savedRoom.id, {
@@ -173,6 +229,8 @@ function loadPersistedRooms() {
         npcs: new Map(savedRoom.npcs || []),
         assets: new Map(savedRoom.assets || []),
         boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false, bgmVolume: Number.isFinite(Number(asset.bgmVolume)) ? Math.max(0, Math.min(1, Number(asset.bgmVolume))) : 1 })) : [],
+        boardLayoutSaves: normalizeBoardLayoutSaves(storedBoardLayoutSaves),
+        scenario: normalizeScenarioPages(savedRoom.scenario),
         inviteToken: savedRoom.inviteToken,
         gmToken,
         systemId: savedRoom.systemId,
@@ -431,10 +489,133 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
-  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
 io.on('connection', (socket) => {
+  socket.on('get-board-layout-saves', (_payload, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: 'セーブ一覧はGMのみ確認できます。' });
+      return;
+    }
+    acknowledge?.({ ok: true, saves: getBoardLayoutSaveSummaries(room) });
+  });
+
+  socket.on('save-board-layout', ({ name: rawName } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const name = cleanText(rawName, 60);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: '画像配置のセーブはGMのみ行えます。' });
+      return;
+    }
+    if (!name) {
+      acknowledge?.({ ok: false, error: 'セーブ名を入力してください。' });
+      return;
+    }
+    if (room.boardLayoutSaves.length >= 50) {
+      acknowledge?.({ ok: false, error: 'セーブ地点は50件までです。不要なセーブを削除してください。' });
+      return;
+    }
+    if (room.boardLayoutSaves.some((save) => save.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      acknowledge?.({ ok: false, error: '同じ名前のセーブがすでにあります。別の名前を入力してください。' });
+      return;
+    }
+    room.boardLayoutSaves.push({
+      id: crypto.randomUUID(),
+      name,
+      boardAssets: JSON.parse(JSON.stringify(room.boardAssets.filter((asset) => asset.category !== 'bgm' && asset.category !== 'characters'))),
+      createdAt: new Date().toISOString()
+    });
+    touchRoom(room);
+    const saves = getBoardLayoutSaveSummaries(room);
+    room.members.forEach((member) => {
+      if (member.role === 'gm') io.to(member.id).emit('board-layout-saves-updated', saves);
+    });
+    acknowledge?.({ ok: true, saves });
+  });
+
+  socket.on('load-board-layout', ({ saveId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: '画像配置のロードはGMのみ行えます。' });
+      return;
+    }
+    const savedLayout = room.boardLayoutSaves.find((save) => save.id === saveId);
+    if (!savedLayout) {
+      acknowledge?.({ ok: false, error: '指定したセーブ地点が見つかりません。' });
+      return;
+    }
+    const preservedAssets = room.boardAssets.filter((asset) => asset.category === 'bgm' || asset.category === 'characters');
+    room.boardAssets = [
+      ...JSON.parse(JSON.stringify(savedLayout.boardAssets)),
+      ...JSON.parse(JSON.stringify(preservedAssets))
+    ];
+    touchRoom(room);
+    io.to(`room:${id}`).emit('board-assets', room.boardAssets);
+    acknowledge?.({ ok: true, saveName: savedLayout.name, boardAssets: room.boardAssets });
+  });
+
+  socket.on('delete-board-layout-save', ({ saveId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: 'セーブ地点の削除はGMのみ行えます。' });
+      return;
+    }
+    const saveIndex = room.boardLayoutSaves.findIndex((save) => save.id === saveId);
+    if (saveIndex < 0) {
+      acknowledge?.({ ok: false, error: '指定したセーブ地点が見つかりません。' });
+      return;
+    }
+    room.boardLayoutSaves.splice(saveIndex, 1);
+    touchRoom(room);
+    const saves = getBoardLayoutSaveSummaries(room);
+    room.members.forEach((member) => {
+      if (member.role === 'gm') io.to(member.id).emit('board-layout-saves-updated', saves);
+    });
+    acknowledge?.({ ok: true, saves });
+  });
+
+  socket.on('get-scenario', (_payload, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: 'シナリオを閲覧する権限がありません。' });
+      return;
+    }
+    acknowledge?.({ ok: true, scenario: normalizeScenarioPages(room.scenario) });
+  });
+
+  socket.on('update-scenario', ({ scenario } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: 'シナリオを編集する権限がありません。' });
+      return;
+    }
+    if (!Array.isArray(scenario) || scenario.length < 1 || scenario.length > 50
+      || scenario.some((page) => typeof page?.title !== 'string' || typeof page?.content !== 'string')) {
+      acknowledge?.({ ok: false, error: 'シナリオの内容を確認してください。' });
+      return;
+    }
+    const scenarioLength = scenario.reduce((total, page) => total + page.title.length + page.content.length, 0);
+    if (scenarioLength > 30000) {
+      acknowledge?.({ ok: false, error: 'シナリオ全体は30,000文字以内で保存してください。' });
+      return;
+    }
+    const normalizedPages = normalizeScenarioPages(scenario);
+    room.scenario = normalizedPages;
+    touchRoom(room);
+    room.members.forEach((member) => {
+      if (member.role === 'gm' && member.id !== socket.id) io.to(member.id).emit('scenario-updated', normalizeScenarioPages(room.scenario));
+    });
+    acknowledge?.({ ok: true, scenario: normalizeScenarioPages(room.scenario) });
+  });
+
   socket.on('get-character-statuses', (_payload, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);

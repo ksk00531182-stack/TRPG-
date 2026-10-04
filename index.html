@@ -62,6 +62,9 @@
           </div>
           <div class="play-area-tools">
             <div class="play-area-tabs" role="tablist" aria-label="プレイエリア">
+              <button id="saveBoardLayoutButton" class="play-area-tab gm-only" type="button" hidden>セーブ</button>
+              <button id="loadBoardLayoutButton" class="play-area-tab gm-only" type="button" disabled hidden>ロード</button>
+              <button id="scenarioButton" class="play-area-tab gm-only" type="button" hidden>シナリオ</button>
               <button id="characterSheetButton" class="play-area-tab" type="button" hidden>キャラクターシート</button>
               <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
             </div>
@@ -73,6 +76,35 @@
           </div>
           <p class="play-area-empty">プレイエリア</p>
           <div id="boardDifferenceMenu" class="board-difference-menu" role="menu" aria-label="画像差分" hidden></div>
+          <dialog id="scenarioDialog" class="character-sheet-dialog scenario-dialog" aria-label="シナリオ編集">
+            <form id="scenarioForm" class="scenario-form">
+              <nav id="scenarioTabs" class="scenario-tabs" role="tablist" aria-label="シナリオの章"></nav>
+              <div class="scenario-page-heading">
+                <label>章・区切り名<input id="scenarioPageTitle" maxlength="80" placeholder="例: 第一章"></label>
+                <button id="deleteScenarioPage" class="character-sheet-delete" type="button">この章を削除</button>
+              </div>
+              <div id="scenarioPageContent" class="scenario-page-content" role="tabpanel">
+                <label for="scenarioInput">本文</label>
+                <div id="scenarioInput" class="scenario-rich-editor" contenteditable="true" role="textbox" aria-label="本文" aria-multiline="true" data-placeholder="この章のシナリオを入力..."></div>
+              </div>
+              <footer class="character-sheet-footer scenario-footer"><span id="scenarioStatus" role="status"></span><div id="scenarioFormatTools" class="scenario-format-tools" role="toolbar" aria-label="文字色"><button type="button" data-scenario-color="#f5f1e8" aria-label="標準色" title="標準色"><span class="scenario-color-swatch is-default"></span></button><button type="button" data-scenario-color="#e53935" aria-label="赤" title="赤"><span class="scenario-color-swatch is-red"></span></button><button type="button" data-scenario-color="#1e88e5" aria-label="青" title="青"><span class="scenario-color-swatch is-blue"></span></button></div><div class="character-sheet-footer-actions"><button id="scenarioClose" class="secondary" type="button">閉じる</button><button type="submit">保存</button></div></footer>
+            </form>
+          </dialog>
+          <dialog id="boardLayoutDialog" class="character-sheet-dialog board-layout-dialog" aria-labelledby="boardLayoutTitle">
+            <header class="character-sheet-header">
+              <div><p class="eyebrow">BOARD LAYOUT</p><h2 id="boardLayoutTitle">セーブ地点</h2></div>
+              <button id="boardLayoutClose" class="secondary" type="button">閉じる</button>
+            </header>
+            <form id="boardLayoutSaveForm" class="board-layout-save-form" hidden>
+              <label>セーブ名<input id="boardLayoutName" maxlength="60" placeholder="例: 戦闘前" required></label>
+              <p id="boardLayoutSaveStatus" role="status"></p>
+              <footer class="character-sheet-footer"><div class="character-sheet-footer-actions"><button id="boardLayoutSaveCancel" class="secondary" type="button">キャンセル</button><button type="submit">保存</button></div></footer>
+            </form>
+            <section id="boardLayoutLoadPanel" class="board-layout-load-panel" hidden>
+              <p id="boardLayoutLoadStatus" role="status"></p>
+              <ul id="boardLayoutSaveList" class="board-layout-save-list"></ul>
+            </section>
+          </dialog>
         </main>
         <aside class="session-sidebar" id="sessionSidebar">
         <section class="session-panel panel">

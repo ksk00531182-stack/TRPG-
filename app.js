@@ -75,7 +75,29 @@ const elements = {
   sessionSidebar: $('#sessionSidebar'),
   characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
+  saveBoardLayoutButton: $('#saveBoardLayoutButton'),
+  loadBoardLayoutButton: $('#loadBoardLayoutButton'),
+  boardLayoutDialog: $('#boardLayoutDialog'),
+  boardLayoutTitle: $('#boardLayoutTitle'),
+  boardLayoutClose: $('#boardLayoutClose'),
+  boardLayoutSaveForm: $('#boardLayoutSaveForm'),
+  boardLayoutName: $('#boardLayoutName'),
+  boardLayoutSaveCancel: $('#boardLayoutSaveCancel'),
+  boardLayoutSaveStatus: $('#boardLayoutSaveStatus'),
+  boardLayoutLoadPanel: $('#boardLayoutLoadPanel'),
+  boardLayoutLoadStatus: $('#boardLayoutLoadStatus'),
+  boardLayoutSaveList: $('#boardLayoutSaveList'),
   characterSheetButton: $('#characterSheetButton'),
+  scenarioButton: $('#scenarioButton'),
+  scenarioDialog: $('#scenarioDialog'),
+  scenarioClose: $('#scenarioClose'),
+  scenarioForm: $('#scenarioForm'),
+  scenarioTabs: $('#scenarioTabs'),
+  scenarioPageTitle: $('#scenarioPageTitle'),
+  scenarioInput: $('#scenarioInput'),
+  scenarioFormatTools: $('#scenarioFormatTools'),
+  deleteScenarioPage: $('#deleteScenarioPage'),
+  scenarioStatus: $('#scenarioStatus'),
   characterSheetDialog: $('#characterSheetDialog'),
   characterSheetClose: $('#characterSheetClose'),
   characterSheetTabs: $('#characterSheetTabs'),
@@ -101,6 +123,7 @@ const state = {
   characterStatuses: [],
   assets: [],
   boardAssets: [],
+  boardLayoutSaves: [],
   bgmPlayers: new Map(),
   masterBgmVolume: 1,
   collapsedGroupIds: new Set(),
@@ -112,6 +135,9 @@ const state = {
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
+  scenarioPages: [],
+  activeScenarioPageId: '',
+  scenarioSavedSnapshot: '',
   activeCharacterSheetPlayerId: '',
   playerId: '',
   inviteToken: params.get('invite') || '',
@@ -1578,6 +1604,12 @@ function enterRoom(result, role) {
   if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
   switchLeftSidebarTab('pc');
   if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
+  if (elements.saveBoardLayoutButton) elements.saveBoardLayoutButton.hidden = role !== 'gm';
+  if (elements.loadBoardLayoutButton) {
+    elements.loadBoardLayoutButton.hidden = role !== 'gm';
+    elements.loadBoardLayoutButton.disabled = role !== 'gm' || !result.hasSavedBoardLayouts;
+  }
+  if (elements.scenarioButton) elements.scenarioButton.hidden = role !== 'gm';
   if (elements.assetCategory) {
     if (role === 'pc') elements.assetCategory.value = 'characters';
     const categoryLabel = elements.assetCategory.closest('.asset-genre');
@@ -1781,6 +1813,379 @@ elements.characterSheetButton?.addEventListener('click', () => {
   if (!elements.characterSheetDialog?.open) elements.characterSheetDialog?.showModal();
   loadCharacterSheets();
 });
+
+function createScenarioPage(index) {
+  return { id: crypto.randomUUID(), title: `区切り ${index + 1}`, content: '' };
+}
+
+function getScenarioSnapshot() {
+  return JSON.stringify(state.scenarioPages);
+}
+
+function hasUnsavedScenarioChanges() {
+  return getScenarioSnapshot() !== state.scenarioSavedSnapshot;
+}
+
+function closeScenarioDialog() {
+  if (hasUnsavedScenarioChanges() && !window.confirm('シナリオに未保存の変更があります。保存せずに閉じてもよろしいですか？')) return;
+  elements.scenarioDialog?.close();
+}
+
+function normalizeScenarioPages(value) {
+  const sourcePages = typeof value === 'string'
+    ? [{ id: crypto.randomUUID(), title: 'シナリオ 1', content: value, contentFormat: 'text' }]
+    : Array.isArray(value) ? value : [];
+  return sourcePages.length
+    ? sourcePages.map((page, index) => {
+      const contentFormat = page?.contentFormat === 'html' ? 'html' : 'text';
+      const content = typeof page?.content === 'string' ? page.content : '';
+      return {
+        id: typeof page?.id === 'string' && page.id ? page.id : crypto.randomUUID(),
+        title: typeof page?.title === 'string' ? page.title : `区切り ${index + 1}`,
+        content: contentFormat === 'html' ? sanitizeScenarioHtml(content) : scenarioTextToHtml(content),
+        contentFormat: 'html'
+      };
+    })
+    : [createScenarioPage(0)];
+}
+
+function escapeScenarioText(value) {
+  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
+function scenarioTextToHtml(value) {
+  return escapeScenarioText(value).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
+}
+
+function sanitizeScenarioHtml(value) {
+  const template = document.createElement('template');
+  template.innerHTML = value;
+  const allowedTags = new Set(['B', 'STRONG', 'BR', 'SPAN', 'DIV', 'P']);
+  const allowedColors = new Set(['rgb(245, 241, 232)', 'rgb(229, 57, 53)', 'rgb(30, 136, 229)']);
+  const cleanChildren = (source, target) => {
+    [...source.childNodes].forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        target.appendChild(document.createTextNode(node.nodeValue || ''));
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE || ['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'SVG'].includes(node.tagName)) return;
+      const safeElement = allowedTags.has(node.tagName) ? document.createElement(node.tagName.toLowerCase()) : null;
+      if (safeElement?.tagName === 'SPAN' && allowedColors.has(node.style.color)) safeElement.style.color = node.style.color;
+      const childTarget = safeElement || target;
+      cleanChildren(node, childTarget);
+      if (safeElement) target.appendChild(safeElement);
+    });
+  };
+  const cleanContent = document.createElement('div');
+  cleanChildren(template.content, cleanContent);
+  return cleanContent.innerHTML;
+}
+
+function renderScenarioTabs() {
+  if (!elements.scenarioTabs) return;
+  elements.scenarioTabs.innerHTML = '';
+  state.scenarioPages.forEach((page, index) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.id = `scenario-tab-${index}`;
+    tab.className = `scenario-tab${page.id === state.activeScenarioPageId ? ' is-active' : ''}`;
+    tab.textContent = page.title || `区切り ${index + 1}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(page.id === state.activeScenarioPageId));
+    tab.setAttribute('aria-controls', 'scenarioPageContent');
+    tab.addEventListener('click', () => {
+      state.activeScenarioPageId = page.id;
+      renderScenarioEditor();
+    });
+    elements.scenarioTabs.appendChild(tab);
+  });
+
+  if (state.scenarioPages.length < 50) {
+    const addTab = document.createElement('button');
+    addTab.type = 'button';
+    addTab.className = 'scenario-tab scenario-tab-add';
+    addTab.textContent = '+';
+    addTab.title = '章・区切りを追加';
+    addTab.setAttribute('aria-label', '章・区切りを追加');
+    addTab.addEventListener('click', () => {
+      const page = createScenarioPage(state.scenarioPages.length);
+      state.scenarioPages.push(page);
+      state.activeScenarioPageId = page.id;
+      renderScenarioEditor();
+      elements.scenarioPageTitle?.focus();
+    });
+    elements.scenarioTabs.appendChild(addTab);
+  }
+}
+
+function renderScenarioEditor() {
+  const page = state.scenarioPages.find((item) => item.id === state.activeScenarioPageId);
+  if (!page) return;
+  renderScenarioTabs();
+  if (elements.scenarioPageTitle) elements.scenarioPageTitle.value = page.title;
+  if (elements.scenarioInput) elements.scenarioInput.innerHTML = page.content;
+  if (elements.deleteScenarioPage) elements.deleteScenarioPage.disabled = state.scenarioPages.length <= 1;
+  const activeTab = [...(elements.scenarioTabs?.querySelectorAll('[role="tab"]') || [])]
+    .find((tab) => tab.getAttribute('aria-selected') === 'true');
+  if (activeTab) elements.scenarioPageContent?.setAttribute('aria-labelledby', activeTab.id || 'scenarioTitle');
+}
+
+elements.scenarioButton?.addEventListener('click', () => {
+  if (state.currentRole !== 'gm') return;
+  if (!elements.scenarioDialog?.open) {
+    elements.playArea?.classList.add('has-open-scenario');
+    elements.scenarioDialog?.show();
+    const dialogBounds = elements.scenarioDialog?.getBoundingClientRect();
+    if (window.matchMedia('(max-width: 1100px)').matches
+      && dialogBounds && (dialogBounds.top < 0 || dialogBounds.bottom > window.innerHeight)) {
+      elements.playArea?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }
+  state.scenarioPages = [createScenarioPage(0)];
+  state.activeScenarioPageId = state.scenarioPages[0].id;
+  state.scenarioSavedSnapshot = getScenarioSnapshot();
+  renderScenarioEditor();
+  if (elements.scenarioStatus) elements.scenarioStatus.textContent = '読み込み中...';
+  socket.emit('get-scenario', {}, (result) => {
+    if (!result?.ok) {
+      if (elements.scenarioStatus) elements.scenarioStatus.textContent = result?.error || 'シナリオを取得できませんでした';
+      return;
+    }
+    state.scenarioPages = normalizeScenarioPages(result.scenario);
+    state.activeScenarioPageId = state.scenarioPages[0].id;
+    state.scenarioSavedSnapshot = getScenarioSnapshot();
+    renderScenarioEditor();
+    if (elements.scenarioStatus) elements.scenarioStatus.textContent = '';
+  });
+});
+function renderBoardLayoutSaves(saves) {
+  state.boardLayoutSaves = Array.isArray(saves) ? saves : [];
+  if (elements.loadBoardLayoutButton) elements.loadBoardLayoutButton.disabled = state.boardLayoutSaves.length === 0;
+  if (!elements.boardLayoutSaveList) return;
+  elements.boardLayoutSaveList.replaceChildren();
+  if (!state.boardLayoutSaves.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-board-layout-saves';
+    empty.textContent = 'セーブ地点はありません。';
+    elements.boardLayoutSaveList.appendChild(empty);
+    return;
+  }
+  [...state.boardLayoutSaves].reverse().forEach((save) => {
+    const item = document.createElement('li');
+    item.className = 'board-layout-save-item';
+    const preview = document.createElement('div');
+    preview.className = 'board-layout-save-preview';
+    preview.setAttribute('aria-label', `${save.name}の盤面プレビュー`);
+    (save.previewAssets || []).forEach((placedAsset, index) => {
+      if (placedAsset.visible === false || placedAsset.groupVisible === false || placedAsset.differenceActive === false) return;
+      const asset = state.assets.find((candidate) => candidate.key === placedAsset.key);
+      if (!asset?.url) return;
+      const image = document.createElement('img');
+      image.alt = '';
+      image.loading = 'lazy';
+      image.src = asset.url;
+      image.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
+      image.style.top = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.y) || 0.5)) * 100}%`;
+      image.style.width = `${Math.max(0.04, Math.min(3, Number(placedAsset.width) || 0.16)) * 100}%`;
+      image.style.height = `${Math.max(0.04, Math.min(3, Number(placedAsset.height) || 0.19)) * 100}%`;
+      image.style.zIndex = String(index + 1);
+      preview.appendChild(image);
+    });
+    const details = document.createElement('div');
+    details.className = 'board-layout-save-details';
+    const name = document.createElement('strong');
+    name.textContent = save.name;
+    const metadata = document.createElement('span');
+    const createdAt = new Date(save.createdAt);
+    metadata.textContent = `${Number.isNaN(createdAt.getTime()) ? '' : createdAt.toLocaleString()} ・ 画像 ${save.assetCount}点`;
+    details.append(name, metadata);
+    const actions = document.createElement('div');
+    actions.className = 'board-layout-save-actions';
+    const loadButton = document.createElement('button');
+    loadButton.type = 'button';
+    loadButton.dataset.boardLayoutAction = 'load';
+    loadButton.dataset.saveId = save.id;
+    loadButton.textContent = 'ロード';
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'secondary';
+    deleteButton.dataset.boardLayoutAction = 'delete';
+    deleteButton.dataset.saveId = save.id;
+    deleteButton.textContent = '削除';
+    actions.append(loadButton, deleteButton);
+    item.append(preview, details, actions);
+    elements.boardLayoutSaveList.appendChild(item);
+  });
+}
+
+function openBoardLayoutDialog(mode) {
+  if (state.currentRole !== 'gm' || !elements.boardLayoutDialog) return;
+  const isSaveMode = mode === 'save';
+  if (elements.boardLayoutTitle) elements.boardLayoutTitle.textContent = isSaveMode ? 'セーブ地点を作成' : 'セーブ地点をロード';
+  if (elements.boardLayoutSaveForm) elements.boardLayoutSaveForm.hidden = !isSaveMode;
+  if (elements.boardLayoutLoadPanel) elements.boardLayoutLoadPanel.hidden = isSaveMode;
+  if (isSaveMode) {
+    elements.boardLayoutSaveForm?.reset();
+    if (elements.boardLayoutSaveStatus) elements.boardLayoutSaveStatus.textContent = '';
+  } else {
+    if (elements.boardLayoutLoadStatus) elements.boardLayoutLoadStatus.textContent = '読み込み中...';
+    socket.emit('get-board-layout-saves', {}, (result) => {
+      if (!result?.ok) {
+        if (elements.boardLayoutLoadStatus) elements.boardLayoutLoadStatus.textContent = result?.error || 'セーブ一覧を取得できませんでした';
+        return;
+      }
+      renderBoardLayoutSaves(result.saves);
+      if (elements.boardLayoutLoadStatus) elements.boardLayoutLoadStatus.textContent = '';
+    });
+  }
+  if (!elements.boardLayoutDialog.open) {
+    elements.playArea?.classList.add('has-open-board-layout');
+    elements.boardLayoutDialog.show();
+    const bounds = elements.boardLayoutDialog.getBoundingClientRect();
+    if (window.matchMedia('(max-width: 1100px)').matches && (bounds.top < 0 || bounds.bottom > window.innerHeight)) {
+      elements.playArea?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }
+}
+
+function closeBoardLayoutDialog() {
+  elements.boardLayoutDialog?.close();
+}
+
+elements.saveBoardLayoutButton?.addEventListener('click', () => openBoardLayoutDialog('save'));
+elements.loadBoardLayoutButton?.addEventListener('click', () => openBoardLayoutDialog('load'));
+elements.boardLayoutClose?.addEventListener('click', closeBoardLayoutDialog);
+elements.boardLayoutSaveCancel?.addEventListener('click', closeBoardLayoutDialog);
+elements.boardLayoutDialog?.addEventListener('close', () => elements.playArea?.classList.remove('has-open-board-layout'));
+elements.boardLayoutDialog?.addEventListener('click', (event) => {
+  if (event.target === elements.boardLayoutDialog) closeBoardLayoutDialog();
+});
+elements.boardLayoutSaveForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = elements.boardLayoutName?.value.trim() || '';
+  if (!name) return;
+  const submitButton = elements.boardLayoutSaveForm.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
+  socket.emit('save-board-layout', { name }, (result) => {
+    if (submitButton) submitButton.disabled = false;
+    if (!result?.ok) {
+      if (elements.boardLayoutSaveStatus) elements.boardLayoutSaveStatus.textContent = result?.error || '画像配置をセーブできませんでした';
+      return;
+    }
+    renderBoardLayoutSaves(result.saves);
+    closeBoardLayoutDialog();
+  });
+});
+elements.boardLayoutSaveList?.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-board-layout-action]');
+  const save = state.boardLayoutSaves.find((item) => item.id === button?.dataset.saveId);
+  if (!button || !save) return;
+  if (button.dataset.boardLayoutAction === 'load') {
+    if (!window.confirm(`「${save.name}」をロードしますか？現在の画像配置は置き換わります。`)) return;
+    button.disabled = true;
+    socket.emit('load-board-layout', { saveId: save.id }, (result) => {
+      if (!result?.ok) {
+        button.disabled = false;
+        if (elements.boardLayoutLoadStatus) elements.boardLayoutLoadStatus.textContent = result?.error || '画像配置をロードできませんでした';
+        return;
+      }
+      renderBoardAssets(result.boardAssets);
+      closeBoardLayoutDialog();
+    });
+  } else if (button.dataset.boardLayoutAction === 'delete'
+    && window.confirm(`「${save.name}」を削除しますか？`)) {
+    button.disabled = true;
+    socket.emit('delete-board-layout-save', { saveId: save.id }, (result) => {
+      if (!result?.ok) {
+        button.disabled = false;
+        if (elements.boardLayoutLoadStatus) elements.boardLayoutLoadStatus.textContent = result?.error || 'セーブ地点を削除できませんでした';
+        return;
+      }
+      renderBoardLayoutSaves(result.saves);
+    });
+  }
+});
+elements.scenarioPageTitle?.addEventListener('input', () => {
+  const page = state.scenarioPages.find((item) => item.id === state.activeScenarioPageId);
+  if (page) page.title = elements.scenarioPageTitle.value;
+  renderScenarioTabs();
+});
+elements.scenarioInput?.addEventListener('input', () => {
+  const page = state.scenarioPages.find((item) => item.id === state.activeScenarioPageId);
+  if (page) {
+    page.content = elements.scenarioInput.innerHTML;
+    page.contentFormat = 'html';
+  }
+});
+elements.scenarioFormatTools?.addEventListener('mousedown', (event) => {
+  if (event.target.closest('button')) event.preventDefault();
+});
+elements.scenarioFormatTools?.addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button?.dataset.scenarioColor || !elements.scenarioInput) return;
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed
+    || !elements.scenarioInput.contains(selection.anchorNode)
+    || !elements.scenarioInput.contains(selection.focusNode)) return;
+  const range = selection.getRangeAt(0);
+  const formattedContent = range.extractContents();
+  if (button.dataset.scenarioColor) {
+    formattedContent.querySelectorAll('span').forEach((span) => {
+      span.style.removeProperty('color');
+      if (!span.style.length) span.replaceWith(...span.childNodes);
+    });
+  }
+  const wrapper = document.createElement('span');
+  wrapper.style.color = button.dataset.scenarioColor;
+  wrapper.appendChild(formattedContent);
+  range.insertNode(wrapper);
+  range.selectNodeContents(wrapper);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  elements.scenarioInput.dispatchEvent(new Event('input', { bubbles: true }));
+});
+elements.deleteScenarioPage?.addEventListener('click', () => {
+  if (state.scenarioPages.length <= 1) return;
+  if (!window.confirm('この章と本文を削除しますか？')) return;
+  const activeIndex = state.scenarioPages.findIndex((page) => page.id === state.activeScenarioPageId);
+  state.scenarioPages.splice(activeIndex, 1);
+  state.activeScenarioPageId = state.scenarioPages[Math.max(0, activeIndex - 1)].id;
+  renderScenarioEditor();
+});
+elements.scenarioClose?.addEventListener('click', closeScenarioDialog);
+elements.scenarioDialog?.addEventListener('close', () => elements.playArea?.classList.remove('has-open-scenario'));
+elements.scenarioDialog?.addEventListener('cancel', (event) => {
+  if (hasUnsavedScenarioChanges() && !window.confirm('シナリオに未保存の変更があります。保存せずに閉じてもよろしいですか？')) {
+    event.preventDefault();
+  }
+});
+elements.scenarioDialog?.addEventListener('click', (event) => {
+  if (event.target === elements.scenarioDialog) closeScenarioDialog();
+});
+elements.scenarioForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (state.currentRole !== 'gm') return;
+  const scenarioLength = state.scenarioPages.reduce((total, page) => total + page.title.length + page.content.length, 0);
+  if (scenarioLength > 30000) {
+    if (elements.scenarioStatus) elements.scenarioStatus.textContent = 'シナリオ全体は30,000文字以内で保存してください';
+    return;
+  }
+  state.scenarioPages.forEach((page) => {
+    page.content = sanitizeScenarioHtml(page.content);
+    page.contentFormat = 'html';
+  });
+  socket.emit('update-scenario', { scenario: state.scenarioPages }, (result) => {
+    if (!result?.ok) {
+      if (elements.scenarioStatus) elements.scenarioStatus.textContent = result?.error || 'シナリオを保存できませんでした';
+      return;
+    }
+    state.scenarioPages = normalizeScenarioPages(result.scenario);
+    state.activeScenarioPageId = state.scenarioPages.find((page) => page.id === state.activeScenarioPageId)?.id || state.scenarioPages[0].id;
+    state.scenarioSavedSnapshot = getScenarioSnapshot();
+    renderScenarioEditor();
+    if (elements.scenarioStatus) elements.scenarioStatus.textContent = '保存しました';
+  });
+});
 elements.characterSheetClose?.addEventListener('click', () => elements.characterSheetDialog?.close());
 elements.characterSheetDialog?.addEventListener('click', (event) => {
   if (event.target === elements.characterSheetDialog) elements.characterSheetDialog.close();
@@ -1912,6 +2317,12 @@ socket.on('character-sheet-updated', (update) => {
   renderSkillRollButtons();
   if (elements.characterSheetDialog?.open) renderCharacterSheet();
 });
+socket.on('scenario-updated', (scenario) => {
+  if (!Array.isArray(scenario) || elements.scenarioDialog?.open) return;
+  state.scenarioPages = normalizeScenarioPages(scenario);
+  state.activeScenarioPageId = state.scenarioPages[0].id;
+  state.scenarioSavedSnapshot = getScenarioSnapshot();
+});
 socket.on('npc-deleted', ({ npcId } = {}) => {
   if (typeof npcId === 'string') removeNpcFromClient(npcId);
 });
@@ -1954,6 +2365,9 @@ socket.on('board-assets', (boardAssets) => {
   const assets = Array.isArray(boardAssets) ? boardAssets : [];
   renderBoardAssets(assets);
   if (state.currentRole === 'pc' && assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
+});
+socket.on('board-layout-saves-updated', (saves) => {
+  if (state.currentRole === 'gm') renderBoardLayoutSaves(saves);
 });
 
 // URL Params Initialization
