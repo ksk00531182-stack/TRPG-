@@ -48,6 +48,7 @@ const elements = {
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
   playArea: document.querySelector('.play-area'),
+  masterBgmVolume: $('#masterBgmVolume'),
   boardAssets: $('#boardAssets'),
   characterBoardAssets: $('#characterBoardAssets'),
   boardDifferenceMenu: $('#boardDifferenceMenu'),
@@ -101,11 +102,13 @@ const state = {
   assets: [],
   boardAssets: [],
   bgmPlayers: new Map(),
+  masterBgmVolume: 1,
   collapsedGroupIds: new Set(),
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
   leftSidebarCollapsed: false,
   rightSidebarCollapsed: false,
+  diceAudioContext: null,
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
@@ -148,6 +151,20 @@ const Storage = {
     }
   }
 };
+
+const savedMasterBgmVolume = Number(Storage.get('trpg-studio-master-bgm-volume', 1));
+state.masterBgmVolume = Number.isFinite(savedMasterBgmVolume) ? Math.max(0, Math.min(1, savedMasterBgmVolume)) : 1;
+if (elements.masterBgmVolume) {
+  elements.masterBgmVolume.value = String(state.masterBgmVolume);
+  elements.masterBgmVolume.addEventListener('input', () => {
+    state.masterBgmVolume = Number(elements.masterBgmVolume.value);
+    Storage.set('trpg-studio-master-bgm-volume', state.masterBgmVolume);
+    state.boardAssets.forEach((placedAsset) => {
+      const player = state.bgmPlayers.get(placedAsset.id);
+      if (player) player.audio.volume = (Number.isFinite(Number(placedAsset.bgmVolume)) ? Number(placedAsset.bgmVolume) : 1) * state.masterBgmVolume;
+    });
+  });
+}
 
 function getSavedRooms() { return Storage.get(state.roomStorageKey, []); }
 function saveRooms(rooms) { Storage.set(state.roomStorageKey, rooms); }
@@ -293,6 +310,70 @@ function parseDiceNotation(value) {
   if (!Number.isInteger(count) || count < 1 || count > 20 || !Number.isInteger(sides) || sides < 2 || sides > 1000 || Math.abs(modifier) > 100000) return null;
   return { count, sides, modifier, expression: normalized };
 }
+
+async function playDiceRollSound() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  state.diceAudioContext ||= new AudioContext();
+  const context = state.diceAudioContext;
+  try {
+    if (context.state === 'suspended') await context.resume();
+  } catch {
+    return;
+  }
+  const now = context.currentTime;
+  const output = context.createGain();
+  output.gain.value = 0.22;
+  output.connect(context.destination);
+  for (let index = 0; index < 7; index += 1) {
+    const start = now + index * 0.047 + Math.random() * 0.018;
+    const oscillator = context.createOscillator();
+    const tone = context.createGain();
+    oscillator.type = 'triangle';
+    oscillator.frequency.setValueAtTime(210 + Math.random() * 280, start);
+    oscillator.frequency.exponentialRampToValueAtTime(85 + Math.random() * 65, start + 0.045);
+    tone.gain.setValueAtTime(0.0001, start);
+    tone.gain.exponentialRampToValueAtTime(0.28, start + 0.004);
+    tone.gain.exponentialRampToValueAtTime(0.0001, start + 0.065);
+    oscillator.connect(tone);
+    tone.connect(output);
+    oscillator.start(start);
+    oscillator.stop(start + 0.07);
+
+    const frameCount = Math.floor(context.sampleRate * 0.022);
+    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let sample = 0; sample < frameCount; sample += 1) {
+      samples[sample] = (Math.random() * 2 - 1) * (1 - sample / frameCount);
+    }
+    const noise = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const noiseGain = context.createGain();
+    noise.buffer = buffer;
+    filter.type = 'bandpass';
+    filter.frequency.value = 1800 + Math.random() * 1000;
+    noiseGain.gain.setValueAtTime(0.0001, start);
+    noiseGain.gain.exponentialRampToValueAtTime(0.12, start + 0.003);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.023);
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(output);
+    noise.start(start);
+  }
+  output.gain.setValueAtTime(0.22, now);
+  output.gain.setValueAtTime(0.22, now + 0.28);
+  output.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
+}
+
+function unlockDiceAudio() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  state.diceAudioContext ||= new AudioContext();
+  if (state.diceAudioContext.state === 'suspended') state.diceAudioContext.resume().catch(() => {});
+}
+
+document.addEventListener('pointerdown', unlockDiceAudio, { passive: true });
+document.addEventListener('keydown', unlockDiceAudio);
 
 function addMessage(message) {
   if (!elements.messageList || !message) return;
@@ -826,6 +907,8 @@ function getBgmPlayer(placedAsset, asset) {
     player = { audio, url: asset.url, generation: 0 };
     state.bgmPlayers.set(placedAsset.id, player);
   }
+  const volume = Number(placedAsset.bgmVolume);
+  player.audio.volume = (Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * state.masterBgmVolume;
   return player;
 }
 
@@ -932,10 +1015,32 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     object.style.height = `${Math.max(0.04, Math.min(3, Number(placedAsset.height) || 0.19)) * 100}%`;
     const image = document.createElement('img');
     image.className = 'board-asset-image';
-    image.src = asset.url;
     image.alt = placedAsset.name || asset.name || '';
     image.title = `${image.alt}（${placedAsset.placedBy || ''}）`;
     image.draggable = false;
+    const fitBoundingBoxToImage = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      const bounds = boardLayer.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return;
+      const height = Math.max(0.04, Math.min(3, Number(placedAsset.height) || 0.19));
+      const width = Math.max(0.04, Math.min(3, height * bounds.height * image.naturalWidth / image.naturalHeight / bounds.width));
+      const currentWidth = Number(placedAsset.width) || 0.16;
+      object.style.width = `${width * 100}%`;
+      if (Math.abs(width - currentWidth) < 0.001) return;
+      placedAsset.width = width;
+      if (canEditBoardAsset && !placedAsset.locked) {
+        socket.emit('update-board-asset', {
+          assetId: placedAsset.id,
+          action: 'resize',
+          x: placedAsset.x,
+          y: placedAsset.y,
+          width,
+          height
+        });
+      }
+    };
+    image.addEventListener('load', fitBoundingBoxToImage, { once: true });
+    image.src = asset.url;
     object.appendChild(image);
     object.addEventListener('contextmenu', (event) => {
       if (!placedAsset.differenceSetId) return;
@@ -1037,6 +1142,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       });
     }
     boardLayer.appendChild(object);
+    if (image.complete && image.naturalWidth) fitBoundingBoxToImage();
   });
 
   const layerSections = [
@@ -1185,9 +1291,17 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         volumeInput.min = '0';
         volumeInput.max = '1';
         volumeInput.step = '0.01';
-        volumeInput.value = String(player.audio.volume);
+        volumeInput.value = String(placedAsset.bgmVolume ?? player.audio.volume);
         volumeInput.setAttribute('aria-label', `${name.textContent}の音量`);
-        volumeInput.addEventListener('input', () => { player.audio.volume = Number(volumeInput.value); });
+        volumeInput.addEventListener('input', () => {
+          placedAsset.bgmVolume = Number(volumeInput.value);
+          player.audio.volume = placedAsset.bgmVolume * state.masterBgmVolume;
+        });
+        volumeInput.addEventListener('change', () => {
+          socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'volume', volume: placedAsset.bgmVolume }, (result) => {
+            if (!result?.ok) setStatus(result?.error || 'BGMの音量を変更できませんでした');
+          });
+        });
         volumeLabel.appendChild(volumeInput);
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
@@ -1740,6 +1854,7 @@ socket.on('history', (messages) => {
   if (Array.isArray(messages)) messages.forEach(addMessage);
 });
 socket.on('message', (message) => {
+  if (message?.secret || Array.isArray(message?.rollResults)) playDiceRollSound();
   addMessage(message);
   if (state.currentRole === 'gm') {
     updateSavedRoom(state.currentRoomId, { updatedAt: new Date().toISOString() });
@@ -1780,9 +1895,15 @@ socket.on('asset-added', (asset) => {
 });
 socket.on('asset-deleted', loadAssets);
 socket.on('character-assigned', loadAssets);
-socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime }) => {
+socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime, volume }) => {
   const placedAsset = state.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
   if (!placedAsset) return;
+  if (action === 'volume') {
+    placedAsset.bgmVolume = Number.isFinite(Number(volume)) ? Math.max(0, Math.min(1, Number(volume))) : 1;
+    const player = state.bgmPlayers.get(assetId);
+    if (player) player.audio.volume = placedAsset.bgmVolume * state.masterBgmVolume;
+    return;
+  }
   placedAsset.bgmPlaying = action === 'play';
   placedAsset.bgmStartedAt = action === 'play' ? startedAt : 0;
   if (Number.isFinite(currentTime)) placedAsset.bgmOffset = Math.max(0, currentTime);

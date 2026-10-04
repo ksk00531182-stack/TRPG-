@@ -171,7 +171,7 @@ function loadPersistedRooms() {
         characterSheets: new Map(savedRoom.characterSheets || []),
         npcs: new Map(savedRoom.npcs || []),
         assets: new Map(savedRoom.assets || []),
-        boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false })) : [],
+        boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false, bgmVolume: Number.isFinite(Number(asset.bgmVolume)) ? Math.max(0, Math.min(1, Number(asset.bgmVolume))) : 1 })) : [],
         inviteToken: savedRoom.inviteToken,
         gmToken,
         systemId: savedRoom.systemId,
@@ -621,6 +621,7 @@ io.on('connection', (socket) => {
       bgmPlaying: false,
       bgmStartedAt: 0,
       bgmOffset: 0,
+      bgmVolume: 1,
       x: isBackground ? 0.5 : 0.5 + ((placementIndex % 5) - 2) * 0.08,
       y: isBackground ? 0.5 : 0.5 + ((Math.floor(placementIndex / 5) % 5) - 2) * 0.08,
       width: isBackground ? 0.9 : 0.16,
@@ -635,12 +636,25 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, boardAsset });
   });
 
-  socket.on('control-board-bgm', ({ assetId, action, currentTime } = {}, acknowledge) => {
+  socket.on('control-board-bgm', ({ assetId, action, currentTime, volume } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const boardAsset = room?.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
-    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'pause'].includes(action)) {
+    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'pause', 'volume'].includes(action)) {
       acknowledge?.({ ok: false, error: 'BGMを操作できません。' });
+      return;
+    }
+    if (action === 'volume') {
+      const normalizedVolume = Number(volume);
+      if (!Number.isFinite(normalizedVolume)) {
+        acknowledge?.({ ok: false, error: 'BGMの音量を確認してください。' });
+        return;
+      }
+      boardAsset.bgmVolume = Math.max(0, Math.min(1, normalizedVolume));
+      touchRoom(room);
+      const playback = { assetId, action, volume: boardAsset.bgmVolume };
+      socket.to(`room:${id}`).emit('board-bgm-control', playback);
+      acknowledge?.({ ok: true, ...playback });
       return;
     }
     const offset = Number(currentTime);
