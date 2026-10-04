@@ -326,17 +326,18 @@ const diceSoundPaths = Object.freeze({
   fumble: '/assets/sounds/dice/fumble.mp3'
 });
 
-function playDiceSoundFile(key, path) {
+async function playDiceSoundFile(key, path) {
   let player = state.diceSoundPlayers.get(key);
   if (!player) {
     const audio = new Audio(path);
     audio.preload = 'none';
-    player = { audio, failed: false };
+    player = { audio, failed: false, unlocked: false, unlocking: false, unlockPromise: null };
     state.diceSoundPlayers.set(key, player);
     audio.addEventListener('error', () => {
       player.failed = true;
     });
   }
+  if (player.unlockPromise) await player.unlockPromise;
   if (player.failed) return Promise.resolve(false);
   return new Promise((resolve) => {
     let completed = false;
@@ -352,13 +353,14 @@ function playDiceSoundFile(key, path) {
       player.failed = true;
       finish(false);
     };
+    const onPlaybackRejected = () => finish(false);
     player.audio.addEventListener('ended', onEnded, { once: true });
     player.audio.addEventListener('error', onError, { once: true });
     try {
       player.audio.currentTime = 0;
-      player.audio.play().catch(onError);
+      player.audio.play().catch(onPlaybackRejected);
     } catch {
-      onError();
+      onPlaybackRejected();
     }
   });
 }
@@ -428,9 +430,33 @@ async function playSynthesizedDiceRollSound() {
 
 function unlockDiceAudio() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  state.diceAudioContext ||= new AudioContext();
-  if (state.diceAudioContext.state === 'suspended') state.diceAudioContext.resume().catch(() => {});
+  if (AudioContext) {
+    state.diceAudioContext ||= new AudioContext();
+    if (state.diceAudioContext.state === 'suspended') state.diceAudioContext.resume().catch(() => {});
+  }
+  Object.entries({ roll: diceRollSoundPath, ...diceSoundPaths }).forEach(([key, path]) => {
+    let player = state.diceSoundPlayers.get(key);
+    if (!player) {
+      const audio = new Audio(path);
+      audio.preload = 'none';
+      player = { audio, failed: false, unlocked: false, unlocking: false, unlockPromise: null };
+      state.diceSoundPlayers.set(key, player);
+      audio.addEventListener('error', () => { player.failed = true; });
+    }
+    if (player.failed || player.unlocked || player.unlocking) return;
+    player.unlocking = true;
+    player.audio.muted = true;
+    player.unlockPromise = player.audio.play().then(() => {
+      player.audio.pause();
+      if (player.audio.readyState >= 1) player.audio.currentTime = 0;
+      player.audio.muted = false;
+      player.unlocked = true;
+      player.unlocking = false;
+    }).catch(() => {
+      player.audio.muted = false;
+      player.unlocking = false;
+    });
+  });
 }
 
 document.addEventListener('pointerdown', unlockDiceAudio, { passive: true });
@@ -1008,6 +1034,25 @@ function playBgm(player, startedAt = Date.now(), offset = 0) {
   else audio.addEventListener('loadedmetadata', start, { once: true });
 }
 
+function clipBoardImageToPlayArea(image, boardLayer) {
+  const boardBounds = boardLayer?.getBoundingClientRect();
+  const imageBounds = image?.getBoundingClientRect();
+  if (!boardBounds?.width || !boardBounds.height || !imageBounds?.width || !imageBounds.height) return;
+  const top = Math.max(0, boardBounds.top - imageBounds.top);
+  const right = Math.max(0, imageBounds.right - boardBounds.right);
+  const bottom = Math.max(0, imageBounds.bottom - boardBounds.bottom);
+  const left = Math.max(0, boardBounds.left - imageBounds.left);
+  image.style.clipPath = top || right || bottom || left
+    ? `inset(${top}px ${right}px ${bottom}px ${left}px)`
+    : '';
+}
+
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.board-asset-image').forEach((image) => {
+    clipBoardImageToPlayArea(image, image.closest('.board-assets'));
+  });
+});
+
 function renderBoardAssets(boardAssets = state.boardAssets) {
   if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.bgmLayerBox) return;
   if (elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
@@ -1092,6 +1137,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       const width = Math.max(0.04, Math.min(3, height * bounds.height * image.naturalWidth / image.naturalHeight / bounds.width));
       const currentWidth = Number(placedAsset.width) || 0.16;
       object.style.width = `${width * 100}%`;
+      clipBoardImageToPlayArea(image, boardLayer);
       if (Math.abs(width - currentWidth) < 0.001) return;
       placedAsset.width = width;
       if (canEditBoardAsset && !placedAsset.locked) {
@@ -1127,6 +1173,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         const updatePosition = (pointerEvent) => {
           object.style.left = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientX - bounds.left) / bounds.width)) * 100}%`;
           object.style.top = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientY - bounds.top) / bounds.height)) * 100}%`;
+          clipBoardImageToPlayArea(image, boardLayer);
         };
         const finishMove = (pointerEvent) => {
           updatePosition(pointerEvent);
@@ -1185,6 +1232,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
             object.style.height = `${height * 100}%`;
             object.style.left = `${x * 100}%`;
             object.style.top = `${y * 100}%`;
+            clipBoardImageToPlayArea(image, boardLayer);
           };
           const finishResize = (pointerEvent) => {
             resize(pointerEvent);
