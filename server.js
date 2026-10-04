@@ -15,7 +15,8 @@ const roomStorePath = process.env.TRPG_ROOM_STORE || path.join(root, 'rooms.json
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8'
+  '.js': 'application/javascript; charset=utf-8',
+  '.mp3': 'audio/mpeg'
 };
 
 const maxAssetSize = 25 * 1024 * 1024;
@@ -595,6 +596,20 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, npc });
   });
 
+  socket.on('delete-npc', ({ npcId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm' || typeof npcId !== 'string' || !room.npcs.has(npcId)) {
+      acknowledge?.({ ok: false, error: 'このNPCを削除できません。' });
+      return;
+    }
+    room.npcs.delete(npcId);
+    touchRoom(room);
+    broadcastMembers(id);
+    socket.to(`room:${id}`).emit('npc-deleted', { npcId });
+    acknowledge?.({ ok: true, npcId });
+  });
+
   socket.on('place-board-asset', ({ key } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
@@ -1043,7 +1058,7 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
-  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false, skillName = '', skillValue, skillPlayerId = '' } = {}) => {
+  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false, skillName = '', skillValue, skillPlayerId = '', rollMode = 'normal' } = {}) => {
     const id = socket.data.roomId;
     const member = socket.data.member;
     const room = id && rooms.get(id);
@@ -1078,25 +1093,54 @@ io.on('connection', (socket) => {
       skillRoll = savedSkill;
     }
     if (!actor) return;
-    const results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
-    const total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
+    const activeRollMode = skillRoll && ['bonus', 'penalty'].includes(rollMode) ? rollMode : 'normal';
+    let skillRollCandidates = [];
+    let results;
+    let total;
+    if (skillRoll && activeRollMode !== 'normal') {
+      const onesDigit = crypto.randomInt(0, 10);
+      const tensDigits = [crypto.randomInt(0, 10), crypto.randomInt(0, 10)];
+      skillRollCandidates = tensDigits.map((tensDigit) => tensDigit * 10 + onesDigit || 100);
+      const chosenIndex = activeRollMode === 'bonus'
+        ? skillRollCandidates.indexOf(Math.min(...skillRollCandidates))
+        : skillRollCandidates.indexOf(Math.max(...skillRollCandidates));
+      total = skillRollCandidates[chosenIndex];
+      results = [total];
+    } else {
+      results = Array.from({ length: diceCount }, () => crypto.randomInt(1, diceSides + 1));
+      total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
+    }
     const isSecret = Boolean(secret) && member.role === 'gm';
+    const skillOutcome = skillRoll ? getSkillRollOutcome(results[0], skillRoll.target) : '';
+    const rollModeLabel = activeRollMode === 'bonus' ? 'ボーナス' : 'ペナルティ';
+    const skillRollText = activeRollMode === 'normal'
+      ? results.join(', ')
+      : `${skillRollCandidates.join(', ')} → ${total}（${rollModeLabel}）`;
+    const rollOutcome = ({
+      'レギュラー成功': 'success',
+      '失敗': 'failure',
+      'クリティカル': 'critical',
+      'エクストリーム成功': 'extremeSuccess',
+      'ハード成功': 'hardSuccess',
+      'ファンブル': 'fumble'
+    })[skillOutcome] || '';
     const notation = typeof expression === 'string' && /^\d+[dD]\d+(?:[+-]\d+)?$/.test(expression)
       ? expression
       : `${diceCount}D${diceSides}${diceModifier > 0 ? `+${diceModifier}` : diceModifier < 0 ? diceModifier : ''}`;
     const message = {
       id: `${Date.now()}-${socket.id}`,
       text: isSecret
-        ? `${actor.name}がシークレットダイスを振りました：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
+        ? `シークレットダイス：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
         : skillRoll
-          ? `${actor.name} が「${skillRoll.name} ${skillRoll.target}」で ${notation} を振りました: ${results.join(', ')} (合計 ${total})・${getSkillRollOutcome(results[0], skillRoll.target)}`
-          : `${actor.name} が ${notation} を振りました: ${results.join(', ')} (合計 ${total})`,
+          ? `「${skillRoll.name} ${skillRoll.target}」: ${skillRollText}・${skillOutcome}`
+          : `${notation}: ${results.join(', ')} (合計 ${total})`,
       name: actor.name,
       role: actor.role,
       scope: 'public',
       senderId: socket.id,
       senderPlayerId: member.playerId || '',
       secret: isSecret,
+      rollOutcome: isSecret ? '' : rollOutcome,
       rollResults: results,
       rollTotal: total,
       time: new Date().toISOString()

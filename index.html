@@ -31,7 +31,6 @@
           <nav class="left-sidebar-tabs" role="tablist" aria-label="左サイドバー">
             <button id="pcSidebarTab" class="left-sidebar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="pcSidebarPanel">PC</button>
             <button id="layerSidebarTab" class="left-sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="layerSidebarPanel" hidden>レイヤー</button>
-            <button id="leftSidebarToggle" class="sidebar-collapse-button" type="button" aria-label="左サイドバーを折りたたむ" title="左サイドバーを折りたたむ" aria-expanded="true">‹</button>
           </nav>
           <section id="pcSidebarPanel" class="characters-panel panel" role="tabpanel" aria-labelledby="pcSidebarTab">
             <section id="characterStatusBoxes" class="character-status-boxes" aria-label="キャラクターステータス" aria-live="polite" hidden></section>
@@ -78,30 +77,20 @@
         <aside class="session-sidebar" id="sessionSidebar">
         <section class="session-panel panel">
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
-            <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
+            <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">ログ</button>
             <button id="diceTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="dicePanel">ダイスロール</button>
             <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
-            <button id="rightSidebarToggle" class="sidebar-collapse-button" type="button" aria-label="右サイドバーを折りたたむ" title="右サイドバーを折りたたむ" aria-expanded="true">›</button>
           </div>
           <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
             <div class="chat-heading"><span id="typing"></span></div>
             <div class="message-list" id="messageList" aria-live="polite"></div>
-            <form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="2" maxlength="2000" placeholder="メッセージを入力..." required></textarea><button type="submit">送信 <span>↗</span></button></form>
+            <form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="1" maxlength="2000" placeholder="メッセージを入力..." required></textarea></form>
           </div>
           <div id="dicePanel" class="tab-panel dice-panel" role="tabpanel" aria-labelledby="diceTab" hidden>
-            <h3>一般ダイス</h3>
             <label id="secretDiceOption" class="secret-dice-option" hidden><input id="secretDiceInput" type="checkbox"> シークレットダイス</label>
             <label id="diceActorOption" class="dice-actor-option" hidden>ロールするキャラクター<select id="diceActor"><option value="">GM</option></select></label>
-            <div class="dice-grid" aria-label="ダイスロール">
-              <button type="button" class="dice-button" data-dice-sides="100">1D100</button>
-              <button type="button" class="dice-button" data-dice-sides="20">1D20</button>
-              <button type="button" class="dice-button" data-dice-sides="12">1D12</button>
-              <button type="button" class="dice-button" data-dice-sides="10">1D10</button>
-              <button type="button" class="dice-button" data-dice-sides="8">1D8</button>
-              <button type="button" class="dice-button" data-dice-sides="6">1D6</button>
-            </div>
             <section id="skillRollSection" class="skill-rolls" aria-label="技能判定" hidden>
-              <h3>技能判定</h3>
+              <div class="skill-roll-heading"><h3>技能判定</h3><select id="skillRollMode" aria-label="技能判定モード"><option value="normal">ノーマル</option><option value="bonus">ボーナス</option><option value="penalty">ペナルティ</option></select></div>
               <div id="skillRollList" class="skill-roll-list"></div>
             </section>
           </div>
@@ -131,7 +120,7 @@
             <summary>ダイスロールに表示する技能</summary>
             <div id="skillRollSettingList" class="skill-roll-setting-list"></div>
           </details>
-          <footer class="character-sheet-footer"><span id="characterSheetStatus" role="status"></span><button type="submit">保存</button></footer>
+          <footer class="character-sheet-footer"><span id="characterSheetStatus" role="status"></span><div class="character-sheet-footer-actions"><button id="deleteNpcButton" class="character-sheet-delete" type="button" hidden>NPCを削除</button><button type="submit">保存</button></div></footer>
         </form>
       </dialog>
     </section>

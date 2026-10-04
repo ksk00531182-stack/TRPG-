@@ -31,6 +31,7 @@ const elements = {
   diceActorOption: $('#diceActorOption'),
   diceActor: $('#diceActor'),
   skillRollSection: $('#skillRollSection'),
+  skillRollMode: $('#skillRollMode'),
   skillRollList: $('#skillRollList'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
@@ -72,8 +73,6 @@ const elements = {
   roomGrid: $('#roomGrid'),
   leftSidebar: $('#leftSidebar'),
   sessionSidebar: $('#sessionSidebar'),
-  leftSidebarToggle: $('#leftSidebarToggle'),
-  rightSidebarToggle: $('#rightSidebarToggle'),
   characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
   characterSheetButton: $('#characterSheetButton'),
@@ -81,6 +80,7 @@ const elements = {
   characterSheetClose: $('#characterSheetClose'),
   characterSheetTabs: $('#characterSheetTabs'),
   characterSheetForm: $('#characterSheetForm'),
+  deleteNpcButton: $('#deleteNpcButton'),
   characterSheetOwner: $('#characterSheetOwner'),
   characterSheetFields: $('#characterSheetFields'),
   skillRollSettings: $('#skillRollSettings'),
@@ -106,9 +106,9 @@ const state = {
   collapsedGroupIds: new Set(),
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
-  leftSidebarCollapsed: false,
-  rightSidebarCollapsed: false,
   diceAudioContext: null,
+  diceSoundQueue: Promise.resolve(),
+  diceSoundPlayers: new Map(),
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
@@ -316,7 +316,62 @@ function parseDiceNotation(value) {
   return { count, sides, modifier, expression: normalized };
 }
 
-async function playDiceRollSound() {
+const diceRollSoundPath = '/assets/sounds/dice/roll.mp3';
+const diceSoundPaths = Object.freeze({
+  success: '/assets/sounds/dice/success.mp3',
+  failure: '/assets/sounds/dice/failure.mp3',
+  critical: '/assets/sounds/dice/critical.mp3',
+  extremeSuccess: '/assets/sounds/dice/extreme-success.mp3',
+  hardSuccess: '/assets/sounds/dice/hard-success.mp3',
+  fumble: '/assets/sounds/dice/fumble.mp3'
+});
+
+function playDiceSoundFile(key, path) {
+  let player = state.diceSoundPlayers.get(key);
+  if (!player) {
+    const audio = new Audio(path);
+    audio.preload = 'none';
+    player = { audio, failed: false };
+    state.diceSoundPlayers.set(key, player);
+    audio.addEventListener('error', () => {
+      player.failed = true;
+    });
+  }
+  if (player.failed) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let completed = false;
+    const finish = (played) => {
+      if (completed) return;
+      completed = true;
+      player.audio.removeEventListener('ended', onEnded);
+      player.audio.removeEventListener('error', onError);
+      resolve(played);
+    };
+    const onEnded = () => finish(true);
+    const onError = () => {
+      player.failed = true;
+      finish(false);
+    };
+    player.audio.addEventListener('ended', onEnded, { once: true });
+    player.audio.addEventListener('error', onError, { once: true });
+    try {
+      player.audio.currentTime = 0;
+      player.audio.play().catch(onError);
+    } catch {
+      onError();
+    }
+  });
+}
+
+function playDiceRollSound(outcome = '') {
+  state.diceSoundQueue = state.diceSoundQueue.then(async () => {
+    if (!await playDiceSoundFile('roll', diceRollSoundPath)) await playSynthesizedDiceRollSound();
+    const outcomePath = diceSoundPaths[outcome];
+    if (outcomePath && !await playDiceSoundFile(outcome, outcomePath)) await playSynthesizedDiceRollSound();
+  }).catch(() => {});
+}
+
+async function playSynthesizedDiceRollSound() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
   state.diceAudioContext ||= new AudioContext();
@@ -368,6 +423,7 @@ async function playDiceRollSound() {
   output.gain.setValueAtTime(0.22, now);
   output.gain.setValueAtTime(0.22, now + 0.28);
   output.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
+  await new Promise((resolve) => window.setTimeout(resolve, 380));
 }
 
 function unlockDiceAudio() {
@@ -566,6 +622,10 @@ function renderCharacterSheet() {
   }
 
   const sheet = state.characterSheets.find((item) => item.playerId === state.activeCharacterSheetPlayerId);
+  if (elements.deleteNpcButton) {
+    elements.deleteNpcButton.hidden = state.currentRole !== 'gm' || sheet?.role !== 'npc';
+    elements.deleteNpcButton.disabled = false;
+  }
   if (elements.characterSheetImport) elements.characterSheetImport.hidden = state.characterSheetSystemId !== 'coc';
   if (elements.characterSheetOwner) {
     const systemName = state.characterSheetSystemId === 'coc' ? 'クトゥルフ神話TRPG' : 'エモクロアTRPG';
@@ -775,7 +835,8 @@ function renderSkillRollButtons() {
           expression: '1D100',
           skillName: skill.name,
           skillValue: skill.target,
-          skillPlayerId: sheet.playerId
+          skillPlayerId: sheet.playerId,
+          rollMode: elements.skillRollMode?.value || 'normal'
         });
         switchSessionTab('chat');
       });
@@ -1530,25 +1591,6 @@ function switchLeftSidebarTab(tab) {
   }
 }
 
-function updateSidebarCollapse() {
-  elements.roomGrid?.classList.toggle('is-left-collapsed', state.leftSidebarCollapsed);
-  elements.roomGrid?.classList.toggle('is-right-collapsed', state.rightSidebarCollapsed);
-  elements.leftSidebar?.classList.toggle('is-collapsed', state.leftSidebarCollapsed);
-  elements.sessionSidebar?.classList.toggle('is-collapsed', state.rightSidebarCollapsed);
-  if (elements.leftSidebarToggle) {
-    elements.leftSidebarToggle.textContent = state.leftSidebarCollapsed ? '›' : '‹';
-    elements.leftSidebarToggle.title = state.leftSidebarCollapsed ? '左サイドバーを展開' : '左サイドバーを折りたたむ';
-    elements.leftSidebarToggle.setAttribute('aria-label', elements.leftSidebarToggle.title);
-    elements.leftSidebarToggle.setAttribute('aria-expanded', String(!state.leftSidebarCollapsed));
-  }
-  if (elements.rightSidebarToggle) {
-    elements.rightSidebarToggle.textContent = state.rightSidebarCollapsed ? '‹' : '›';
-    elements.rightSidebarToggle.title = state.rightSidebarCollapsed ? '右サイドバーを展開' : '右サイドバーを折りたたむ';
-    elements.rightSidebarToggle.setAttribute('aria-label', elements.rightSidebarToggle.title);
-    elements.rightSidebarToggle.setAttribute('aria-expanded', String(!state.rightSidebarCollapsed));
-  }
-}
-
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
   state.selectedLayerIds.clear();
@@ -1559,7 +1601,6 @@ function enterRoom(result, role) {
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
-  updateSidebarCollapse();
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
   if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
@@ -1681,13 +1722,6 @@ function switchSessionTab(tab) {
 elements.chatTab?.addEventListener('click', () => switchSessionTab('chat'));
 elements.diceTab?.addEventListener('click', () => switchSessionTab('dice'));
 elements.memoTab?.addEventListener('click', () => switchSessionTab('memo'));
-
-elements.dicePanel?.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-dice-sides]');
-  if (!button) return;
-  socket.emit('roll-dice', { sides: Number(button.dataset.diceSides), count: 1, actorId: elements.diceActor?.value || '', secret: Boolean(elements.secretDiceInput?.checked) });
-  switchSessionTab('chat');
-});
 
 if (elements.roomList) {
   elements.roomList.addEventListener('click', (event) => {
@@ -1826,6 +1860,33 @@ elements.characterSheetForm?.addEventListener('submit', (event) => {
     renderCharacterSheet();
   });
 });
+function removeNpcFromClient(npcId) {
+  state.characterSheets = state.characterSheets.filter((sheet) => sheet.playerId !== npcId);
+  state.characterStatuses = state.characterStatuses.filter((status) => status.playerId !== npcId);
+  if (state.activeCharacterSheetPlayerId === npcId) {
+    state.activeCharacterSheetPlayerId = state.characterSheets[0]?.playerId || '';
+  }
+  renderCharacterStatuses();
+  renderSkillRollButtons();
+  if (elements.characterSheetDialog?.open) renderCharacterSheet();
+}
+
+elements.deleteNpcButton?.addEventListener('click', () => {
+  const npc = state.characterSheets.find((sheet) => sheet.playerId === state.activeCharacterSheetPlayerId);
+  if (state.currentRole !== 'gm' || npc?.role !== 'npc') return;
+  const npcName = npc.name || npc.playerId;
+  if (!window.confirm(`「${npcName}」を削除します。\n削除したNPCは復元できません。削除しますか？`)) return;
+  elements.deleteNpcButton.disabled = true;
+  socket.emit('delete-npc', { npcId: npc.playerId }, (result) => {
+    if (!result?.ok) {
+      elements.deleteNpcButton.disabled = false;
+      if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = result?.error || 'NPCを削除できませんでした';
+      return;
+    }
+    removeNpcFromClient(npc.playerId);
+    if (elements.characterSheetStatus) elements.characterSheetStatus.textContent = 'NPCを削除しました';
+  });
+});
 
 elements.playAreaTabs?.forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -1841,15 +1902,6 @@ elements.playAreaTabs?.forEach((tab) => {
 
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
 elements.layerSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('layers'));
-elements.leftSidebarToggle?.addEventListener('click', () => {
-  state.leftSidebarCollapsed = !state.leftSidebarCollapsed;
-  updateSidebarCollapse();
-});
-elements.rightSidebarToggle?.addEventListener('click', () => {
-  state.rightSidebarCollapsed = !state.rightSidebarCollapsed;
-  updateSidebarCollapse();
-});
-
 elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
 // Socket Events
@@ -1860,7 +1912,7 @@ socket.on('history', (messages) => {
   if (Array.isArray(messages)) messages.forEach(addMessage);
 });
 socket.on('message', (message) => {
-  if (message?.secret || Array.isArray(message?.rollResults)) playDiceRollSound();
+  if (message?.secret || Array.isArray(message?.rollResults)) playDiceRollSound(message?.rollOutcome);
   addMessage(message);
   if (state.currentRole === 'gm') {
     updateSavedRoom(state.currentRoomId, { updatedAt: new Date().toISOString() });
@@ -1887,6 +1939,9 @@ socket.on('character-sheet-updated', (update) => {
   }
   renderSkillRollButtons();
   if (elements.characterSheetDialog?.open) renderCharacterSheet();
+});
+socket.on('npc-deleted', ({ npcId } = {}) => {
+  if (typeof npcId === 'string') removeNpcFromClient(npcId);
 });
 socket.on('typing', ({ name, isTyping }) => {
   if (elements.typing) elements.typing.textContent = isTyping ? `${name} が入力中...` : '';
