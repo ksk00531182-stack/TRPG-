@@ -947,8 +947,7 @@ io.on('connection', (socket) => {
     const differenceAssets = room?.boardAssets.filter((asset) => asset.differenceSetId === differenceSetId) || [];
     const selectedAsset = differenceAssets.find((asset) => asset.id === assetId);
     if (!room || !member || differenceAssets.length < 2 || !selectedAsset
-      || !canManageBoardAssets(member, differenceAssets)
-      || differenceAssets.some((asset) => asset.locked)) {
+      || !canManageBoardAssets(member, differenceAssets)) {
       acknowledge?.({ ok: false, error: 'この差分を変更する権限がないか、差分が見つかりません。' });
       return;
     }

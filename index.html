@@ -26,27 +26,28 @@
     </section>
     <section class="room" id="room" hidden>
       <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
-      <div class="room-grid">
-        <aside class="left-sidebar">
+      <div class="room-grid" id="roomGrid">
+        <aside class="left-sidebar" id="leftSidebar">
           <nav class="left-sidebar-tabs" role="tablist" aria-label="左サイドバー">
             <button id="pcSidebarTab" class="left-sidebar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="pcSidebarPanel">PC</button>
             <button id="layerSidebarTab" class="left-sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="layerSidebarPanel" hidden>レイヤー</button>
+            <button id="leftSidebarToggle" class="sidebar-collapse-button" type="button" aria-label="左サイドバーを折りたたむ" title="左サイドバーを折りたたむ" aria-expanded="true">‹</button>
           </nav>
           <section id="pcSidebarPanel" class="characters-panel panel" role="tabpanel" aria-labelledby="pcSidebarTab">
             <section id="characterStatusBoxes" class="character-status-boxes" aria-label="キャラクターステータス" aria-live="polite" hidden></section>
           </section>
           <section id="layerSidebarPanel" class="left-layers-panel" role="tabpanel" aria-labelledby="layerSidebarTab" hidden>
-            <section id="layerBox" class="layer-box" aria-label="素材レイヤー">
-              <h3>素材</h3>
-              <form id="layerGroupForm" class="layer-group-form" hidden><input id="layerGroupName" maxlength="40" placeholder="差分名"><button type="submit">選択画像を差分登録</button></form>
-              <div id="layerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
-              <ul id="layerList"></ul>
-            </section>
             <section id="characterLayerBox" class="character-layer-box" aria-label="キャラクターレイヤー">
               <h3>キャラクター</h3>
               <form id="characterLayerGroupForm" class="layer-group-form" hidden><input id="characterLayerGroupName" maxlength="40" placeholder="差分名"><button type="submit">選択画像を差分登録</button></form>
               <div id="characterLayerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
               <ul id="characterLayerList"></ul>
+            </section>
+            <section id="layerBox" class="layer-box" aria-label="素材レイヤー">
+              <h3>素材</h3>
+              <form id="layerGroupForm" class="layer-group-form" hidden><input id="layerGroupName" maxlength="40" placeholder="差分名"><button type="submit">選択画像を差分登録</button></form>
+              <div id="layerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
+              <ul id="layerList"></ul>
             </section>
             <section id="bgmLayerBox" class="bgm-layer-box" aria-label="BGMレイヤー">
               <h3>BGM</h3>
@@ -73,12 +74,13 @@
           <p class="play-area-empty">プレイエリア</p>
           <div id="boardDifferenceMenu" class="board-difference-menu" role="menu" aria-label="画像差分" hidden></div>
         </main>
-        <aside class="session-sidebar">
+        <aside class="session-sidebar" id="sessionSidebar">
         <section class="session-panel panel">
           <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
             <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">セッション通信</button>
             <button id="diceTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="dicePanel">ダイスロール</button>
             <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
+            <button id="rightSidebarToggle" class="sidebar-collapse-button" type="button" aria-label="右サイドバーを折りたたむ" title="右サイドバーを折りたたむ" aria-expanded="true">›</button>
           </div>
           <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
             <div class="chat-heading"><span id="typing"></span></div>

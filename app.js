@@ -68,6 +68,11 @@ const elements = {
   layerSidebarTab: $('#layerSidebarTab'),
   pcSidebarPanel: $('#pcSidebarPanel'),
   layerSidebarPanel: $('#layerSidebarPanel'),
+  roomGrid: $('#roomGrid'),
+  leftSidebar: $('#leftSidebar'),
+  sessionSidebar: $('#sessionSidebar'),
+  leftSidebarToggle: $('#leftSidebarToggle'),
+  rightSidebarToggle: $('#rightSidebarToggle'),
   characterStatusBoxes: $('#characterStatusBoxes'),
   playAreaTabs: document.querySelectorAll('.play-area-tab[role="tab"]'),
   characterSheetButton: $('#characterSheetButton'),
@@ -99,6 +104,8 @@ const state = {
   collapsedGroupIds: new Set(),
   selectedBoardAssetId: '',
   selectedLayerIds: new Set(),
+  leftSidebarCollapsed: false,
+  rightSidebarCollapsed: false,
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
@@ -361,6 +368,10 @@ function renderCharacterStatuses() {
     const heading = document.createElement('h3');
     heading.textContent = status.role === 'npc' ? status.name : status.characterName || 'キャラクター未設定';
     headingRow.appendChild(heading);
+    const playerName = document.createElement('span');
+    playerName.className = 'character-status-player';
+    playerName.textContent = status.role === 'npc' ? 'NPC' : `PC: ${status.name || status.playerId}`;
+    headingRow.appendChild(playerName);
     if (status.role === 'npc' && state.currentRole === 'gm') {
       const visibilityButton = document.createElement('button');
       visibilityButton.type = 'button';
@@ -377,9 +388,6 @@ function renderCharacterStatuses() {
       });
       headingRow.appendChild(visibilityButton);
     }
-    const playerName = document.createElement('p');
-    playerName.className = 'character-status-player';
-    playerName.textContent = status.role === 'npc' ? 'NPC' : `PC: ${status.name || status.playerId}`;
     const values = document.createElement('dl');
     [['HP', status.hp], ['SAN', status.san], ['幸運', status.luck]].forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -411,7 +419,7 @@ function renderCharacterStatuses() {
       }
       values.appendChild(row);
     });
-    card.append(headingRow, playerName, values);
+    card.append(headingRow, values);
     elements.characterStatusBoxes.appendChild(card);
   });
   elements.characterStatusBoxes.hidden = state.currentRole === 'entry'
@@ -978,7 +986,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       renderBoardAssets();
     });
     if (isSelected && canEditBoardAsset && !placedAsset.locked) {
-      ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach((handle) => {
+      ['nw', 'ne', 'se', 'sw'].forEach((handle) => {
         const resizeHandle = document.createElement('button');
         resizeHandle.type = 'button';
         resizeHandle.className = `bounding-handle handle-${handle}`;
@@ -1050,6 +1058,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           const groupRow = document.createElement('li');
           groupRow.className = 'layer-group-row';
           groupRow.dataset.groupId = activeGroupId;
+          groupRow.dataset.assetId = displayOrder.find((asset) => asset.groupId === activeGroupId)?.id || '';
+          groupRow.draggable = canManageLayerAssets(groupAssets) && groupAssets.every((asset) => !asset.locked);
           const groupCollapsed = state.collapsedGroupIds.has(activeGroupId);
           const groupMarker = document.createElement('button');
           groupMarker.type = 'button';
@@ -1401,6 +1411,25 @@ function switchLeftSidebarTab(tab) {
   }
 }
 
+function updateSidebarCollapse() {
+  elements.roomGrid?.classList.toggle('is-left-collapsed', state.leftSidebarCollapsed);
+  elements.roomGrid?.classList.toggle('is-right-collapsed', state.rightSidebarCollapsed);
+  elements.leftSidebar?.classList.toggle('is-collapsed', state.leftSidebarCollapsed);
+  elements.sessionSidebar?.classList.toggle('is-collapsed', state.rightSidebarCollapsed);
+  if (elements.leftSidebarToggle) {
+    elements.leftSidebarToggle.textContent = state.leftSidebarCollapsed ? '›' : '‹';
+    elements.leftSidebarToggle.title = state.leftSidebarCollapsed ? '左サイドバーを展開' : '左サイドバーを折りたたむ';
+    elements.leftSidebarToggle.setAttribute('aria-label', elements.leftSidebarToggle.title);
+    elements.leftSidebarToggle.setAttribute('aria-expanded', String(!state.leftSidebarCollapsed));
+  }
+  if (elements.rightSidebarToggle) {
+    elements.rightSidebarToggle.textContent = state.rightSidebarCollapsed ? '‹' : '›';
+    elements.rightSidebarToggle.title = state.rightSidebarCollapsed ? '右サイドバーを展開' : '右サイドバーを折りたたむ';
+    elements.rightSidebarToggle.setAttribute('aria-label', elements.rightSidebarToggle.title);
+    elements.rightSidebarToggle.setAttribute('aria-expanded', String(!state.rightSidebarCollapsed));
+  }
+}
+
 function enterRoom(result, role) {
   state.currentRoomId = result.roomId;
   state.selectedLayerIds.clear();
@@ -1410,6 +1439,7 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  updateSidebarCollapse();
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
   if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
@@ -1691,6 +1721,14 @@ elements.playAreaTabs?.forEach((tab) => {
 
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
 elements.layerSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('layers'));
+elements.leftSidebarToggle?.addEventListener('click', () => {
+  state.leftSidebarCollapsed = !state.leftSidebarCollapsed;
+  updateSidebarCollapse();
+});
+elements.rightSidebarToggle?.addEventListener('click', () => {
+  state.rightSidebarCollapsed = !state.rightSidebarCollapsed;
+  updateSidebarCollapse();
+});
 
 elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
@@ -1869,50 +1907,68 @@ layerBoxes.forEach((layerBox) => {
 const reorderableLayerBoxes = [...layerBoxes, elements.bgmLayerBox].filter(Boolean);
 reorderableLayerBoxes.forEach((layerBox) => {
   layerBox.addEventListener('dragstart', (event) => {
-    const row = event.target.closest('.layer-row[draggable="true"]');
+    const row = event.target.closest('.layer-row[draggable="true"], .layer-group-row[draggable="true"]');
     if (!row || event.target.closest('button, input')) { event.preventDefault(); return; }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', row.dataset.assetId);
     row.classList.add('is-dragging');
   });
   layerBox.addEventListener('dragend', (event) => {
-    event.target.closest('.layer-row')?.classList.remove('is-dragging');
+    event.target.closest('.layer-row, .layer-group-row')?.classList.remove('is-dragging');
     layerBox.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
   });
   layerBox.addEventListener('dragover', (event) => {
-    const asset = state.boardAssets.find((item) => item.id === event.target.closest('.layer-row')?.dataset.assetId);
+    const targetRow = event.target.closest('.layer-row, .layer-group-row');
+    const asset = state.boardAssets.find((item) => item.id === targetRow?.dataset.assetId);
     if (!asset || !canManageLayerAssets([asset])) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    layerBox.querySelectorAll('.drop-target').forEach((row) => row.classList.remove('drop-target'));
+    targetRow?.classList.add('drop-target');
   });
   layerBox.addEventListener('drop', (event) => {
-    const targetRow = event.target.closest('.layer-row');
+    const targetRow = event.target.closest('.layer-row, .layer-group-row');
     const draggedId = event.dataTransfer.getData('text/plain');
     if (!targetRow || !draggedId || draggedId === targetRow.dataset.assetId) return;
     event.preventDefault();
     const draggedAsset = state.boardAssets.find((asset) => asset.id === draggedId);
     const targetAsset = state.boardAssets.find((asset) => asset.id === targetRow.dataset.assetId);
-    if (!canManageLayerAssets([draggedAsset, targetAsset])) return;
+    if (!draggedAsset || !targetAsset || !canManageLayerAssets([draggedAsset, targetAsset])) return;
     const visibleOrder = [...state.boardAssets].reverse();
-    let sourceIndex = visibleOrder.findIndex((asset) => asset.id === draggedId);
-    let targetIndex = visibleOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
+    const getBundleKey = (asset) => asset.groupId ? `group:${asset.groupId}` : `asset:${asset.id}`;
+    const bundles = [];
+    const seenBundles = new Set();
+    visibleOrder.forEach((asset) => {
+      const key = getBundleKey(asset);
+      if (seenBundles.has(key)) return;
+      seenBundles.add(key);
+      bundles.push(visibleOrder.filter((candidate) => getBundleKey(candidate) === key));
+    });
+    const sourceKey = getBundleKey(draggedAsset);
+    const targetKey = getBundleKey(targetAsset);
+    if (sourceKey === targetKey) return;
+    const isAfterTarget = event.clientY > targetRow.getBoundingClientRect().top + targetRow.getBoundingClientRect().height / 2;
+    const moveBundle = (bundleList) => {
+      const sourceIndex = bundleList.findIndex((bundle) => getBundleKey(bundle[0]) === sourceKey);
+      if (sourceIndex < 0) return false;
+      const [sourceBundle] = bundleList.splice(sourceIndex, 1);
+      const targetIndex = bundleList.findIndex((bundle) => getBundleKey(bundle[0]) === targetKey);
+      if (!sourceBundle || targetIndex < 0) return false;
+      bundleList.splice(targetIndex + (isAfterTarget ? 1 : 0), 0, sourceBundle);
+      return true;
+    };
     if (state.currentRole === 'pc') {
-      const ownedIds = new Set(state.boardAssets.filter((asset) => canManageLayerAssets([asset])).map((asset) => asset.id));
-      const ownedPositions = visibleOrder.map((asset, index) => ownedIds.has(asset.id) ? index : -1).filter((index) => index >= 0);
-      const ownedOrder = ownedPositions.map((index) => visibleOrder[index]);
-      sourceIndex = ownedOrder.findIndex((asset) => asset.id === draggedId);
-      targetIndex = ownedOrder.findIndex((asset) => asset.id === targetRow.dataset.assetId);
-      const [movedAsset] = ownedOrder.splice(sourceIndex, 1);
-      ownedOrder.splice(targetIndex, 0, movedAsset);
-      ownedPositions.forEach((position, index) => { visibleOrder[position] = ownedOrder[index]; });
-    } else {
-      const [movedAsset] = visibleOrder.splice(sourceIndex, 1);
-      visibleOrder.splice(targetIndex, 0, movedAsset);
+      const ownedPositions = bundles.map((bundle, index) => bundle.every((asset) => canManageLayerAssets([asset])) ? index : -1).filter((index) => index >= 0);
+      const ownedBundles = ownedPositions.map((index) => bundles[index]);
+      if (!moveBundle(ownedBundles)) return;
+      ownedPositions.forEach((position, index) => { bundles[position] = ownedBundles[index]; });
+    } else if (!moveBundle(bundles)) {
+      return;
     }
-    state.boardAssets = [...visibleOrder].reverse();
+    const reorderedVisible = bundles.flat();
+    state.boardAssets = [...reorderedVisible].reverse();
     renderBoardAssets();
-    socket.emit('update-board-asset', { assetId: draggedId, action: 'reorder', order: visibleOrder.map((asset) => asset.id) }, (result) => {
+    socket.emit('update-board-asset', { assetId: draggedId, action: 'reorder', order: reorderedVisible.map((asset) => asset.id) }, (result) => {
       if (!result?.ok) setStatus(result?.error || 'レイヤーを並べ替えられませんでした');
     });
   });
