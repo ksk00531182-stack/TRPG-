@@ -152,19 +152,24 @@ const Storage = {
   }
 };
 
-const savedMasterBgmVolume = Number(Storage.get('trpg-studio-master-bgm-volume', 1));
-state.masterBgmVolume = Number.isFinite(savedMasterBgmVolume) ? Math.max(0, Math.min(1, savedMasterBgmVolume)) : 1;
-if (elements.masterBgmVolume) {
-  elements.masterBgmVolume.value = String(state.masterBgmVolume);
-  elements.masterBgmVolume.addEventListener('input', () => {
-    state.masterBgmVolume = Number(elements.masterBgmVolume.value);
-    Storage.set('trpg-studio-master-bgm-volume', state.masterBgmVolume);
-    state.boardAssets.forEach((placedAsset) => {
-      const player = state.bgmPlayers.get(placedAsset.id);
-      if (player) player.audio.volume = (Number.isFinite(Number(placedAsset.bgmVolume)) ? Number(placedAsset.bgmVolume) : 1) * state.masterBgmVolume;
-    });
+function getMasterBgmVolumeKey() {
+  const owner = state.currentRole === 'pc' ? state.playerId || 'pc' : 'gm';
+  return `trpg-studio-master-bgm-volume:${state.currentRoomId}:${owner}`;
+}
+
+function setMasterBgmVolume(value, persist = false) {
+  const volume = Number(value);
+  state.masterBgmVolume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+  if (elements.masterBgmVolume) elements.masterBgmVolume.value = String(state.masterBgmVolume);
+  if (persist && state.currentRoomId) Storage.set(getMasterBgmVolumeKey(), state.masterBgmVolume);
+  state.boardAssets.forEach((placedAsset) => {
+    const player = state.bgmPlayers.get(placedAsset.id);
+    const trackVolume = Number(placedAsset.bgmVolume);
+    if (player) player.audio.volume = (Number.isFinite(trackVolume) ? trackVolume : 1) * state.masterBgmVolume;
   });
 }
+
+if (elements.masterBgmVolume) elements.masterBgmVolume.addEventListener('input', () => setMasterBgmVolume(elements.masterBgmVolume.value, true));
 
 function getSavedRooms() { return Storage.get(state.roomStorageKey, []); }
 function saveRooms(rooms) { Storage.set(state.roomStorageKey, rooms); }
@@ -1553,6 +1558,7 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   updateSidebarCollapse();
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
