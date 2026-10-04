@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TRPG Studio | Room</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <main class="shell">
+    <section class="entry" id="entry">
+      <p class="eyebrow">TRPG STUDIO / REALTIME ROOM</p>
+      <h1>同じ卓に、<br><em>同じ声</em>を。</h1>
+      <p class="intro">GMとPCが、ルーム内のメッセージでつながるシンプルなセッション通信室。</p>
+      <form id="joinForm" class="join-form">
+        <input id="roomId" type="hidden">
+        <label id="systemLabel">TRPGシステム<select id="systemId" required><option value="coc">クトゥルフ神話TRPG</option><option value="emoklore">エモクロアTRPG</option></select></label>
+        <label>ルームタイトル<input id="roomTitle" required maxlength="80" placeholder="例: 月影の港"></label>
+        <label id="playerIdLabel" hidden>プレイヤーID<input id="playerId" maxlength="40" pattern="[^\s]{1,40}" placeholder="例: sato"></label>
+        <label id="nameLabel"><span>GM名</span><input id="name" required maxlength="40" placeholder="例: 佐藤"></label>
+        <p id="entryHint" class="hint">GMとして新しいルームを作成します。作成後、PC用招待URLを共有してください。</p>
+        <button id="joinButton" type="submit">ルームを作成 <span>→</span></button>
+        <button id="roomListButton" class="secondary" type="button">ルーム一覧</button>
+      </form>
+      <section class="room-library" id="roomLibrary" hidden>
+        <div class="room-library-panel"><div class="library-heading"><div><p class="eyebrow">YOUR ROOMS</p><h2>ルーム一覧</h2></div></div>
+          <div class="room-list" id="roomList"><p class="empty-rooms">ルームがまだ作成されていません。</p></div>
+        </div>
+      </section>
+      <p class="connection"><span class="status-dot"></span><span id="status">サーバーへ接続しています</span></p>
+    </section>
+    <section class="room" id="room" hidden>
+      <header class="room-header"><div><p class="room-system" id="roomSystem"></p><h2 id="roomLabel"></h2></div><button id="copyLink" class="secondary" type="button">PC参加URLをコピー</button></header>
+      <div class="room-grid" id="roomGrid">
+        <aside class="left-sidebar" id="leftSidebar">
+          <nav class="left-sidebar-tabs" role="tablist" aria-label="左サイドバー">
+            <button id="pcSidebarTab" class="left-sidebar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="pcSidebarPanel">PC</button>
+            <button id="layerSidebarTab" class="left-sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="layerSidebarPanel" hidden>レイヤー</button>
+          </nav>
+          <section id="pcSidebarPanel" class="characters-panel panel" role="tabpanel" aria-labelledby="pcSidebarTab">
+            <section id="characterStatusBoxes" class="character-status-boxes" aria-label="キャラクターステータス" aria-live="polite" hidden></section>
+          </section>
+          <section id="layerSidebarPanel" class="left-layers-panel" role="tabpanel" aria-labelledby="layerSidebarTab" hidden>
+            <section id="characterLayerBox" class="character-layer-box" aria-label="キャラクターレイヤー">
+              <h3>キャラクター</h3>
+              <form id="characterLayerGroupForm" class="layer-group-form" hidden><input id="characterLayerGroupName" maxlength="40" placeholder="差分名"><button type="submit">選択画像を差分登録</button></form>
+              <div id="characterLayerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
+              <ul id="characterLayerList"></ul>
+            </section>
+            <section id="layerBox" class="layer-box" aria-label="素材レイヤー">
+              <h3>素材</h3>
+              <form id="layerGroupForm" class="layer-group-form" hidden><input id="layerGroupName" maxlength="40" placeholder="差分名"><button type="submit">選択画像を差分登録</button></form>
+              <div id="layerArrangeTools" class="layer-arrange-tools" hidden><button type="button" data-layer-batch="match-size-selected">サイズを揃える</button><button type="button" data-layer-batch="stack-selected">重ねて整列</button></div>
+              <ul id="layerList"></ul>
+            </section>
+            <section id="bgmLayerBox" class="bgm-layer-box" aria-label="BGMレイヤー">
+              <h3>BGM</h3>
+              <ul id="bgmLayerList"></ul>
+            </section>
+          </section>
+        </aside>
+        <main class="play-area" aria-label="プレイエリア">
+          <label class="master-bgm-volume"><span>全体音量</span><input id="masterBgmVolume" type="range" min="0" max="1" step="0.01" value="1" aria-label="BGM全体の音量"></label>
+          <div class="board-viewport">
+            <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
+            <div id="characterBoardAssets" class="board-assets character-board-assets" aria-label="配置されたキャラクター"></div>
+          </div>
+          <div class="play-area-tools">
+            <div class="play-area-tabs" role="tablist" aria-label="プレイエリア">
+              <button id="characterSheetButton" class="play-area-tab" type="button" hidden>キャラクターシート</button>
+              <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
+            </div>
+            <section id="playAreaAssetPanel" class="assets" aria-label="プレイエリア素材" hidden>
+              <div class="assets-heading"><span id="assetStatus"></span></div>
+              <div class="asset-controls"><label class="asset-genre">ジャンル<select id="assetCategory" aria-label="素材ジャンル"><option value="characters">キャラクター</option><option value="npcs">NPC</option><option value="backgrounds">背景</option><option value="materials">資料</option><option value="icons">アイコン</option><option value="bgm">BGM</option></select></label><div class="asset-upload gm-only" id="assetUpload" hidden><label class="file-picker">追加<input id="assetFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/ogg,audio/wav" multiple></label></div></div>
+              <div class="asset-list" id="assetList"><p class="empty-assets">素材を読み込んでいます...</p></div>
+            </section>
+          </div>
+          <p class="play-area-empty">プレイエリア</p>
+          <div id="boardDifferenceMenu" class="board-difference-menu" role="menu" aria-label="画像差分" hidden></div>
+        </main>
+        <aside class="session-sidebar" id="sessionSidebar">
+        <section class="session-panel panel">
+          <div class="panel-tabs" role="tablist" aria-label="セッション表示切り替え">
+            <button id="chatTab" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="chatPanel">ログ</button>
+            <button id="diceTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="dicePanel">ダイスロール</button>
+            <button id="memoTab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="memoPanel">メモ</button>
+          </div>
+          <div id="chatPanel" class="tab-panel" role="tabpanel" aria-labelledby="chatTab">
+            <div class="chat-heading"><span id="typing"></span></div>
+            <div class="message-list" id="messageList" aria-live="polite"></div>
+            <form class="message-form" id="messageForm"><select id="messageTarget" aria-label="送信先"><option value="">全体チャット</option></select><textarea id="messageInput" rows="1" maxlength="2000" placeholder="メッセージを入力..." required></textarea></form>
+          </div>
+          <div id="dicePanel" class="tab-panel dice-panel" role="tabpanel" aria-labelledby="diceTab" hidden>
+            <label id="secretDiceOption" class="secret-dice-option" hidden><input id="secretDiceInput" type="checkbox"> シークレットダイス</label>
+            <label id="diceActorOption" class="dice-actor-option" hidden>ロールするキャラクター<select id="diceActor"><option value="">GM</option></select></label>
+            <section id="skillRollSection" class="skill-rolls" aria-label="技能判定" hidden>
+              <div class="skill-roll-heading"><h3>技能判定</h3><select id="skillRollMode" aria-label="技能判定モード"><option value="normal">ノーマル</option><option value="bonus">ボーナス</option><option value="penalty">ペナルティ</option></select></div>
+              <div id="skillRollList" class="skill-roll-list"></div>
+            </section>
+          </div>
+          <div id="memoPanel" class="tab-panel" role="tabpanel" aria-labelledby="memoTab" hidden>
+            <textarea id="memoInput" class="memo-input" placeholder="自由にメモを入力..."></textarea>
+          </div>
+        </section>
+        </aside>
+      </div>
+      <dialog id="characterSheetDialog" class="character-sheet-dialog" aria-labelledby="characterSheetTitle">
+        <header class="character-sheet-header">
+          <div><p class="eyebrow">CHARACTER SHEET</p><h2 id="characterSheetTitle">キャラクターシート</h2></div>
+          <button id="characterSheetClose" class="secondary" type="button">閉じる</button>
+        </header>
+        <nav id="characterSheetTabs" class="character-sheet-tabs" aria-label="PC別キャラクターシート" hidden></nav>
+        <p id="characterSheetOwner" class="character-sheet-owner"></p>
+        <form id="characterSheetForm" class="character-sheet-form">
+          <details id="characterSheetImport" class="character-sheet-import" hidden>
+            <summary>ココフォリアのキャラクターデータから入力</summary>
+            <div class="character-sheet-import-tools">
+              <textarea id="characterSheetImportData" rows="6" placeholder="ココフォリア形式のJSONを貼り付け"></textarea>
+              <button id="characterSheetImportButton" class="secondary" type="button">入力欄に反映</button>
+            </div>
+          </details>
+          <div id="characterSheetFields" class="character-sheet-fields"></div>
+          <details id="skillRollSettings" class="skill-roll-settings" hidden>
+            <summary>ダイスロールに表示する技能</summary>
+            <div id="skillRollSettingList" class="skill-roll-setting-list"></div>
+          </details>
+          <footer class="character-sheet-footer"><span id="characterSheetStatus" role="status"></span><div class="character-sheet-footer-actions"><button id="deleteNpcButton" class="character-sheet-delete" type="button" hidden>NPCを削除</button><button type="submit">保存</button></div></footer>
+        </form>
+      </dialog>
+    </section>
+  </main>
+  <script src="/socket.io/socket.io.js"></script><script src="app.js"></script>
+</body>
+</html>
