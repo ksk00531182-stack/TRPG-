@@ -1,41 +1,13 @@
-# TRPG Studio
+# ダイス効果音
 
-GMとPCが同じルームでリアルタイムにメッセージを送受信する最小構成です。
+共通のダイスロール音と、判定結果ごとのMP3ファイルをこのフォルダーに配置してください。ファイル名は次のとおりです。
 
-## 起動
+- `roll.mp3` - 共通のダイスロール音
+- `success.mp3` - 成功
+- `failure.mp3` - 失敗
+- `critical.mp3` - クリティカル
+- `extreme-success.mp3` - エクストリーム成功
+- `hard-success.mp3` - ハード成功
+- `fumble.mp3` - ファンブル
 
-```text
-npm install
-npm start
-```
-
-ブラウザで `http://localhost:3000` を開き、GMがルームを作成してPCへ参加URLを共有します。ルーム情報とメッセージ履歴は `TRPG_ROOM_STORE` で指定したJSONファイルに保存されます。Renderでは永続ディスク上の `/var/data/rooms.json` を使用するため、再デプロイ後もルームを復元できます。
-
-通常のURLではGMがルームを作成します。作成後に表示される「PC参加URLをコピー」で招待URLを発行し、そのURLをPCへ共有してください。PCは招待URLからのみ入室できます。画面上の参加形態選択はありません。
-
-## R2設定
-
-Renderまたはローカル環境に次の環境変数を設定すると、GM画面から素材をR2へ直接アップロードできます。
-
-```text
-R2_ACCOUNT_ID=Cloudflare Account ID
-R2_ACCESS_KEY_ID=R2 Access Key ID
-R2_SECRET_ACCESS_KEY=R2 Secret Access Key
-R2_BUCKET_NAME=R2 bucket name
-```
-
-R2バケットのCORSには、TRPG StudioのURLからの `PUT` と `GET` を許可してください。開発中は `http://localhost:3000`、Renderでは実際のサービスURLを許可します。認証情報はブラウザやリポジトリへ書き込まないでください。
-
-R2のCORS設定例:
-
-```json
-[
-	{
-		"AllowedOrigins": ["http://localhost:3000", "https://あなたのサービス.onrender.com"],
-		"AllowedMethods": ["GET", "PUT", "HEAD"],
-		"AllowedHeaders": ["Content-Type"],
-		"ExposeHeaders": ["ETag"],
-		"MaxAgeSeconds": 3600
-	}
-]
-```
+通常のダイスロールでは `roll.mp3` を再生します。技能判定では `roll.mp3` の再生終了後に該当する判定音を続けて再生します。各ブラウザーで音声を初めて使うときに読み込み、以降は同じ音声を再利用します。ファイルが未配置、または再生できない場合は、従来の合成効果音を使います。
