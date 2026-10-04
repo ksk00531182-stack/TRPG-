@@ -217,12 +217,15 @@
 .asset-card .character-assignment { grid-column: 2 / -1; width: 100%; padding: 5px 7px; font-size: 10px; }
 .asset-card .asset-place:hover { outline: 1px solid var(--accent); }
 .asset-card .asset-place img { width: 100%; height: 100%; object-fit: cover; }
-.board-object { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; }
+.board-object { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
 .board-object.is-selected { outline: 1px solid var(--accent); outline-offset: 1px; }
 .board-object.is-multi-selected:not(.is-selected) { outline: 1px dashed var(--green); outline-offset: 2px; }
 .board-object.is-locked { cursor: not-allowed; }
-.board-object .board-asset-image { position: static; display: block; width: 100%; height: 100%; object-fit: contain; transform: none; pointer-events: auto; }
-.bounding-handle { position: absolute; z-index: 2; width: 10px; height: 10px; min-width: 10px; padding: 0; border: 1px solid #242724; background: #f5f1e8; }
+.board-object .board-asset-image { position: static; display: block; width: 100%; height: 100%; object-fit: contain; transform: none; pointer-events: none; }
+.board-object .board-asset-hitarea { position: absolute; z-index: 1; inset: 0; pointer-events: auto; touch-action: none; }
+.board-object.is-editable .board-asset-hitarea { cursor: grab; }
+.board-object.is-editable .board-asset-hitarea:active { cursor: grabbing; }
+.bounding-handle { position: absolute; z-index: 2; width: 10px; height: 10px; min-width: 10px; padding: 0; border: 1px solid #242724; background: #f5f1e8; pointer-events: auto; }
 .handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
 .handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
 .handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }

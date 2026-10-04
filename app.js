@@ -108,7 +108,7 @@ const state = {
   selectedLayerIds: new Set(),
   diceAudioContext: null,
   diceSoundQueue: Promise.resolve(),
-  diceSoundPlayers: new Map(),
+  diceSoundBuffers: new Map(),
   characterSheetSystemId: '',
   characterSheetFields: [],
   characterSheets: [],
@@ -327,136 +327,55 @@ const diceSoundPaths = Object.freeze({
 });
 
 async function playDiceSoundFile(key, path) {
-  let player = state.diceSoundPlayers.get(key);
-  if (!player) {
-    const audio = new Audio(path);
-    audio.preload = 'none';
-    player = { audio, failed: false, unlocked: false, unlocking: false, unlockPromise: null };
-    state.diceSoundPlayers.set(key, player);
-    audio.addEventListener('error', () => {
-      player.failed = true;
-    });
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return false;
+  state.diceAudioContext ||= new AudioContext();
+  const context = state.diceAudioContext;
+  if (context.state === 'suspended') await context.resume();
+
+  let bufferPromise = state.diceSoundBuffers.get(key);
+  if (!bufferPromise) {
+    bufferPromise = fetch(path)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => context.decodeAudioData(data))
+      .catch((error) => {
+        console.warn(`ダイス効果音を読み込めませんでした: ${path}`, error);
+        return null;
+      });
+    state.diceSoundBuffers.set(key, bufferPromise);
   }
-  if (player.unlockPromise) await player.unlockPromise;
-  if (player.failed) return Promise.resolve(false);
+  const buffer = await bufferPromise;
+  if (!buffer) return false;
+
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.connect(context.destination);
   return new Promise((resolve) => {
-    let completed = false;
-    const finish = (played) => {
-      if (completed) return;
-      completed = true;
-      player.audio.removeEventListener('ended', onEnded);
-      player.audio.removeEventListener('error', onError);
-      resolve(played);
-    };
-    const onEnded = () => finish(true);
-    const onError = () => {
-      player.failed = true;
-      finish(false);
-    };
-    const onPlaybackRejected = () => finish(false);
-    player.audio.addEventListener('ended', onEnded, { once: true });
-    player.audio.addEventListener('error', onError, { once: true });
+    source.addEventListener('ended', () => resolve(true), { once: true });
     try {
-      player.audio.currentTime = 0;
-      player.audio.play().catch(onPlaybackRejected);
+      source.start();
     } catch {
-      onPlaybackRejected();
+      resolve(false);
     }
   });
 }
 
 function playDiceRollSound(outcome = '') {
   state.diceSoundQueue = state.diceSoundQueue.then(async () => {
-    if (!await playDiceSoundFile('roll', diceRollSoundPath)) await playSynthesizedDiceRollSound();
+    await playDiceSoundFile('roll', diceRollSoundPath);
     const outcomePath = diceSoundPaths[outcome];
-    if (outcomePath && !await playDiceSoundFile(outcome, outcomePath)) await playSynthesizedDiceRollSound();
+    if (outcomePath) await playDiceSoundFile(outcome, outcomePath);
   }).catch(() => {});
-}
-
-async function playSynthesizedDiceRollSound() {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  state.diceAudioContext ||= new AudioContext();
-  const context = state.diceAudioContext;
-  try {
-    if (context.state === 'suspended') await context.resume();
-  } catch {
-    return;
-  }
-  const now = context.currentTime;
-  const output = context.createGain();
-  output.gain.value = 0.22;
-  output.connect(context.destination);
-  for (let index = 0; index < 7; index += 1) {
-    const start = now + index * 0.047 + Math.random() * 0.018;
-    const oscillator = context.createOscillator();
-    const tone = context.createGain();
-    oscillator.type = 'triangle';
-    oscillator.frequency.setValueAtTime(210 + Math.random() * 280, start);
-    oscillator.frequency.exponentialRampToValueAtTime(85 + Math.random() * 65, start + 0.045);
-    tone.gain.setValueAtTime(0.0001, start);
-    tone.gain.exponentialRampToValueAtTime(0.28, start + 0.004);
-    tone.gain.exponentialRampToValueAtTime(0.0001, start + 0.065);
-    oscillator.connect(tone);
-    tone.connect(output);
-    oscillator.start(start);
-    oscillator.stop(start + 0.07);
-
-    const frameCount = Math.floor(context.sampleRate * 0.022);
-    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
-    const samples = buffer.getChannelData(0);
-    for (let sample = 0; sample < frameCount; sample += 1) {
-      samples[sample] = (Math.random() * 2 - 1) * (1 - sample / frameCount);
-    }
-    const noise = context.createBufferSource();
-    const filter = context.createBiquadFilter();
-    const noiseGain = context.createGain();
-    noise.buffer = buffer;
-    filter.type = 'bandpass';
-    filter.frequency.value = 1800 + Math.random() * 1000;
-    noiseGain.gain.setValueAtTime(0.0001, start);
-    noiseGain.gain.exponentialRampToValueAtTime(0.12, start + 0.003);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.023);
-    noise.connect(filter);
-    filter.connect(noiseGain);
-    noiseGain.connect(output);
-    noise.start(start);
-  }
-  output.gain.setValueAtTime(0.22, now);
-  output.gain.setValueAtTime(0.22, now + 0.28);
-  output.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
-  await new Promise((resolve) => window.setTimeout(resolve, 380));
 }
 
 function unlockDiceAudio() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (AudioContext) {
-    state.diceAudioContext ||= new AudioContext();
-    if (state.diceAudioContext.state === 'suspended') state.diceAudioContext.resume().catch(() => {});
-  }
-  Object.entries({ roll: diceRollSoundPath, ...diceSoundPaths }).forEach(([key, path]) => {
-    let player = state.diceSoundPlayers.get(key);
-    if (!player) {
-      const audio = new Audio(path);
-      audio.preload = 'none';
-      player = { audio, failed: false, unlocked: false, unlocking: false, unlockPromise: null };
-      state.diceSoundPlayers.set(key, player);
-      audio.addEventListener('error', () => { player.failed = true; });
-    }
-    if (player.failed || player.unlocked || player.unlocking) return;
-    player.unlocking = true;
-    player.audio.muted = true;
-    player.unlockPromise = player.audio.play().then(() => {
-      player.audio.pause();
-      if (player.audio.readyState >= 1) player.audio.currentTime = 0;
-      player.audio.muted = false;
-      player.unlocked = true;
-      player.unlocking = false;
-    }).catch(() => {
-      player.audio.muted = false;
-      player.unlocking = false;
-    });
-  });
+  if (!AudioContext) return;
+  state.diceAudioContext ||= new AudioContext();
+  if (state.diceAudioContext.state === 'suspended') state.diceAudioContext.resume().catch(() => {});
 }
 
 document.addEventListener('pointerdown', unlockDiceAudio, { passive: true });
@@ -1034,7 +953,7 @@ function playBgm(player, startedAt = Date.now(), offset = 0) {
   else audio.addEventListener('loadedmetadata', start, { once: true });
 }
 
-function clipBoardImageToPlayArea(image, boardLayer) {
+function clipBoardObjectToPlayArea(image, hitArea, boardLayer) {
   const boardBounds = boardLayer?.getBoundingClientRect();
   const imageBounds = image?.getBoundingClientRect();
   if (!boardBounds?.width || !boardBounds.height || !imageBounds?.width || !imageBounds.height) return;
@@ -1042,14 +961,17 @@ function clipBoardImageToPlayArea(image, boardLayer) {
   const right = Math.max(0, imageBounds.right - boardBounds.right);
   const bottom = Math.max(0, imageBounds.bottom - boardBounds.bottom);
   const left = Math.max(0, boardBounds.left - imageBounds.left);
-  image.style.clipPath = top || right || bottom || left
+  const clipPath = top || right || bottom || left
     ? `inset(${top}px ${right}px ${bottom}px ${left}px)`
     : '';
+  image.style.clipPath = clipPath;
+  if (hitArea) hitArea.style.clipPath = clipPath;
 }
 
 window.addEventListener('resize', () => {
   document.querySelectorAll('.board-asset-image').forEach((image) => {
-    clipBoardImageToPlayArea(image, image.closest('.board-assets'));
+    const object = image.closest('.board-object');
+    clipBoardObjectToPlayArea(image, object?.querySelector('.board-asset-hitarea'), image.closest('.board-assets'));
   });
 });
 
@@ -1129,6 +1051,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     image.alt = placedAsset.name || asset.name || '';
     image.title = `${image.alt}（${placedAsset.placedBy || ''}）`;
     image.draggable = false;
+    const hitArea = document.createElement('div');
+    hitArea.className = 'board-asset-hitarea';
     const fitBoundingBoxToImage = () => {
       if (!image.naturalWidth || !image.naturalHeight) return;
       const bounds = boardLayer.getBoundingClientRect();
@@ -1137,7 +1061,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       const width = Math.max(0.04, Math.min(3, height * bounds.height * image.naturalWidth / image.naturalHeight / bounds.width));
       const currentWidth = Number(placedAsset.width) || 0.16;
       object.style.width = `${width * 100}%`;
-      clipBoardImageToPlayArea(image, boardLayer);
+      clipBoardObjectToPlayArea(image, hitArea, boardLayer);
       if (Math.abs(width - currentWidth) < 0.001) return;
       placedAsset.width = width;
       if (canEditBoardAsset && !placedAsset.locked) {
@@ -1153,7 +1077,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     };
     image.addEventListener('load', fitBoundingBoxToImage, { once: true });
     image.src = asset.url;
-    object.appendChild(image);
+    object.append(image, hitArea);
     object.addEventListener('contextmenu', (event) => {
       if (!placedAsset.differenceSetId) return;
       const differenceAssets = state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId);
@@ -1173,7 +1097,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         const updatePosition = (pointerEvent) => {
           object.style.left = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientX - bounds.left) / bounds.width)) * 100}%`;
           object.style.top = `${Math.max(0.03, Math.min(0.97, (pointerEvent.clientY - bounds.top) / bounds.height)) * 100}%`;
-          clipBoardImageToPlayArea(image, boardLayer);
+          clipBoardObjectToPlayArea(image, hitArea, boardLayer);
         };
         const finishMove = (pointerEvent) => {
           updatePosition(pointerEvent);
@@ -1232,7 +1156,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
             object.style.height = `${height * 100}%`;
             object.style.left = `${x * 100}%`;
             object.style.top = `${y * 100}%`;
-            clipBoardImageToPlayArea(image, boardLayer);
+            clipBoardObjectToPlayArea(image, hitArea, boardLayer);
           };
           const finishResize = (pointerEvent) => {
             resize(pointerEvent);
