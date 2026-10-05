@@ -1251,10 +1251,12 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           const groupId = activeGroupId;
           const groupAssets = state.boardAssets.filter((asset) => asset.groupId === activeGroupId);
           const groupRow = document.createElement('li');
-          groupRow.className = 'layer-group-row';
+          groupRow.className = `layer-group-row${placedAsset.differenceSetId ? ' is-difference-group' : ''}`;
           groupRow.dataset.groupId = activeGroupId;
           groupRow.dataset.assetId = displayOrder.find((asset) => asset.groupId === activeGroupId)?.id || '';
           groupRow.draggable = canManageLayerAssets(groupAssets) && groupAssets.every((asset) => !asset.locked);
+          const groupHeading = document.createElement('div');
+          groupHeading.className = 'layer-group-heading';
           const groupCollapsed = state.collapsedGroupIds.has(activeGroupId);
           const groupMarker = document.createElement('button');
           groupMarker.type = 'button';
@@ -1278,7 +1280,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           const groupCount = document.createElement('small');
           groupCount.className = 'layer-group-count';
           groupCount.textContent = String(groupAssets.length);
-          groupRow.append(groupMarker, groupName, groupCount);
+          groupHeading.append(groupMarker, groupName, groupCount);
+          groupRow.appendChild(groupHeading);
           if (canManageLayerAssets(groupAssets)) {
             const controls = document.createElement('div');
             controls.className = 'layer-controls';

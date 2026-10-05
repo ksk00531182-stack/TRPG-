@@ -230,6 +230,9 @@
 .layer-box ul { display: grid; gap: 4px; margin: 0; padding: 6px; list-style: none; }
 .layer-subheading { margin: 0; padding: 7px 10px 2px; color: var(--accent); font: 600 10px 'DM Mono', monospace; }
 .layer-group-row { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 8px; border: 1px solid rgba(227, 173, 104, .3); background: rgba(227, 173, 104, .1); color: var(--accent); font-size: 11px; }
+.layer-group-row.is-difference-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.layer-group-heading { display: flex; min-width: 0; flex: 1; align-items: center; gap: 6px; }
+.layer-group-row.is-difference-group > .layer-controls { justify-self: end; }
 .layer-group-toggle { flex: 0 0 20px; width: 20px; height: 20px; min-width: 20px; padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 12px; line-height: 1; }
 .layer-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layer-group-name, .layer-name { cursor: default; }
@@ -288,6 +291,8 @@
 	.layer-arrange-tools button { padding: 5px 2px; font-size: 9px; }
 	.layer-box ul, .character-layer-box ul, .bgm-layer-box ul { gap: 3px; padding: 4px; }
 	.layer-group-row { gap: 3px; min-height: 28px; padding: 4px; font-size: 10px; }
+	.layer-group-row.is-difference-group { gap: 2px; }
+	.layer-group-heading { gap: 3px; }
 	.layer-group-toggle { flex-basis: 16px; width: 16px; height: 18px; min-width: 16px; }
 	.layer-group-count { font-size: 9px; }
 	.layer-row { gap: 3px; padding: 3px; font-size: 10px; }
