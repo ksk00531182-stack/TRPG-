@@ -1311,11 +1311,16 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         }
       }
       const row = document.createElement('li');
-      row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.differenceActive ? ' is-difference-active' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}`;
+      const isImageLayer = list === elements.layerList;
+      row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.differenceActive ? ' is-difference-active' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}${isImageLayer ? ' is-image-layer' : ''}`;
       row.hidden = Boolean(activeGroupId && state.collapsedGroupIds.has(activeGroupId));
       row.dataset.assetId = placedAsset.id;
       const canManagePlacedAsset = canManageLayerAssets([placedAsset]);
       row.draggable = canManagePlacedAsset && (isBgmLayer || !placedAsset.locked);
+      const bgmTitleRow = isBgmLayer ? document.createElement('div') : null;
+      if (bgmTitleRow) bgmTitleRow.className = 'bgm-layer-title';
+      const imageTitleRow = isImageLayer ? document.createElement('div') : null;
+      if (imageTitleRow) imageTitleRow.className = 'image-layer-title';
       if (canManagePlacedAsset && !isBgmLayer) {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -1324,37 +1329,44 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         checkbox.disabled = Boolean(placedAsset.locked);
         checkbox.dataset.assetId = placedAsset.id;
         checkbox.setAttribute('aria-label', `${placedAsset.name || '画像'}を選択`);
-        row.appendChild(checkbox);
+        (imageTitleRow || row).appendChild(checkbox);
       }
-      if (isBgmLayer) {
-        const icon = document.createElement('span');
-        icon.className = 'layer-bgm-icon';
-        icon.textContent = '♫';
-        icon.setAttribute('aria-hidden', 'true');
-        row.appendChild(icon);
-      } else {
+      if (!isBgmLayer) {
         const thumbnail = document.createElement('img');
         thumbnail.className = 'layer-thumbnail';
         thumbnail.src = asset?.url || '';
         thumbnail.alt = '';
         thumbnail.draggable = false;
-        row.appendChild(thumbnail);
+        (imageTitleRow || row).appendChild(thumbnail);
       }
       const name = document.createElement('span');
       name.className = 'layer-name';
       name.textContent = placedAsset.name || '画像';
-      row.appendChild(name);
+      if (isBgmLayer) {
+        bgmTitleRow.appendChild(name);
+        if (state.currentRole === 'gm') {
+          const renameButton = document.createElement('button');
+          renameButton.type = 'button';
+          renameButton.className = 'bgm-rename';
+          renameButton.textContent = '✎';
+          renameButton.title = 'BGMタイトルを変更';
+          renameButton.setAttribute('aria-label', `${name.textContent}のタイトルを変更`);
+          renameButton.addEventListener('click', () => editLayerLabel(name, { assetId: placedAsset.id }));
+          bgmTitleRow.appendChild(renameButton);
+        }
+        row.appendChild(bgmTitleRow);
+      } else {
+        if (imageTitleRow) {
+          imageTitleRow.appendChild(name);
+          row.appendChild(imageTitleRow);
+        } else {
+          row.appendChild(name);
+        }
+      }
       if (state.currentRole === 'gm' && isBgmLayer && asset?.url && asset.type?.startsWith('audio/')) {
         const player = getBgmPlayer(placedAsset, asset);
         const controls = document.createElement('div');
         controls.className = 'layer-controls bgm-layer-controls';
-        const renameButton = document.createElement('button');
-        renameButton.type = 'button';
-        renameButton.className = 'bgm-rename';
-        renameButton.textContent = '✎';
-        renameButton.title = 'BGMタイトルを変更';
-        renameButton.setAttribute('aria-label', `${name.textContent}のタイトルを変更`);
-        renameButton.addEventListener('click', () => editLayerLabel(name, { assetId: placedAsset.id }));
         const toggleButton = document.createElement('button');
         toggleButton.type = 'button';
         toggleButton.className = 'bgm-toggle';
@@ -1406,7 +1418,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         deleteButton.textContent = '削除';
         deleteButton.title = '配置を盤面から削除';
         deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
-        controls.append(renameButton, toggleButton, volumeLabel, deleteButton);
+        controls.append(toggleButton, volumeLabel, deleteButton);
         row.appendChild(controls);
       } else if (canManagePlacedAsset && !isBgmLayer) {
         const controls = document.createElement('div');
