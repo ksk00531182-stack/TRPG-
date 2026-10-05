@@ -1434,7 +1434,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         deleteButton.title = '配置を盤面から削除';
         deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
         controls.appendChild(deleteButton);
-        row.appendChild(controls);
+        visualMediaRow.appendChild(controls);
       } else if (!isBgmLayer) {
         const status = document.createElement('small');
         status.className = `layer-status-icons${placedAsset.locked ? ' is-locked' : ''}`;

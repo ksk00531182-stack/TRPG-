@@ -238,7 +238,6 @@
 .layer-row { display: flex; min-width: 0; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid transparent; font-size: 11px; }
 .layer-row.is-difference-active { border-color: rgba(227, 173, 104, .55); background: rgba(227, 173, 104, .08); }
 .layer-row.is-grouped { margin-left: 14px; padding-left: 9px; border-left: 2px solid rgba(227, 173, 104, .55); background: rgba(255, 255, 255, .025); }
-.layer-row.is-bgm-layer { border-top-color: rgba(139, 195, 163, .2); }
 .layer-row.is-bgm-layer { display: grid; grid-template-columns: minmax(0, 1fr); }
 .layer-row.is-visual-layer { display: grid; grid-template-columns: minmax(0, 1fr); }
 .layer-row.is-visual-layer > .layer-name { grid-row: 1; }
