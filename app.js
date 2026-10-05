@@ -1187,13 +1187,27 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
           const initial = { x: Number(placedAsset.x) || 0.5, y: Number(placedAsset.y) || 0.5, width: Number(placedAsset.width) || 0.16, height: Number(placedAsset.height) || 0.19 };
           const directionX = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0;
           const directionY = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0;
-          const resize = (pointerEvent) => {
+          const getResizeTransform = (pointerEvent) => {
             const dx = (pointerEvent.clientX - startX) / bounds.width;
             const dy = (pointerEvent.clientY - startY) / bounds.height;
-            const width = Math.max(0.04, Math.min(3, initial.width + directionX * dx));
-            const height = Math.max(0.04, Math.min(3, initial.height + directionY * dy));
-            const x = Math.max(0.03, Math.min(0.97, initial.x + (directionX ? dx / 2 : 0)));
-            const y = Math.max(0.03, Math.min(0.97, initial.y + (directionY ? dy / 2 : 0)));
+            const aspectRatio = initial.width / initial.height;
+            const horizontalPerHeight = aspectRatio * bounds.width;
+            const verticalPerHeight = bounds.height;
+            const heightDelta = (
+              directionX * dx * bounds.width * horizontalPerHeight
+              + directionY * dy * bounds.height * verticalPerHeight
+            ) / (horizontalPerHeight ** 2 + verticalPerHeight ** 2);
+            const minScale = Math.max(0.04 / initial.width, 0.04 / initial.height);
+            const maxScale = Math.min(3 / initial.width, 3 / initial.height);
+            const scale = Math.max(minScale, Math.min(maxScale, (initial.height + heightDelta) / initial.height));
+            const width = initial.width * scale;
+            const height = initial.height * scale;
+            const x = Math.max(0.03, Math.min(0.97, initial.x + directionX * (width - initial.width) / 2));
+            const y = Math.max(0.03, Math.min(0.97, initial.y + directionY * (height - initial.height) / 2));
+            return { x, y, width, height };
+          };
+          const resize = (pointerEvent) => {
+            const { x, y, width, height } = getResizeTransform(pointerEvent);
             object.style.width = `${width * 100}%`;
             object.style.height = `${height * 100}%`;
             object.style.left = `${x * 100}%`;
@@ -1204,15 +1218,10 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
             resize(pointerEvent);
             resizeHandle.removeEventListener('pointermove', resize);
             resizeHandle.removeEventListener('pointerup', finishResize);
-            const dx = (pointerEvent.clientX - startX) / bounds.width;
-            const dy = (pointerEvent.clientY - startY) / bounds.height;
             socket.emit('update-board-asset', {
               assetId: placedAsset.id,
               action: 'resize',
-              x: initial.x + (directionX ? dx / 2 : 0),
-              y: initial.y + (directionY ? dy / 2 : 0),
-              width: initial.width + directionX * dx,
-              height: initial.height + directionY * dy
+              ...getResizeTransform(pointerEvent)
             });
           };
           resizeHandle.addEventListener('pointermove', resize);
@@ -1339,6 +1348,13 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         const player = getBgmPlayer(placedAsset, asset);
         const controls = document.createElement('div');
         controls.className = 'layer-controls bgm-layer-controls';
+        const renameButton = document.createElement('button');
+        renameButton.type = 'button';
+        renameButton.className = 'bgm-rename';
+        renameButton.textContent = '✎';
+        renameButton.title = 'BGMタイトルを変更';
+        renameButton.setAttribute('aria-label', `${name.textContent}のタイトルを変更`);
+        renameButton.addEventListener('click', () => editLayerLabel(name, { assetId: placedAsset.id }));
         const toggleButton = document.createElement('button');
         toggleButton.type = 'button';
         toggleButton.className = 'bgm-toggle';
@@ -1390,7 +1406,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         deleteButton.textContent = '削除';
         deleteButton.title = '配置を盤面から削除';
         deleteButton.setAttribute('aria-label', `${name.textContent}を盤面から削除`);
-        controls.append(toggleButton, volumeLabel, deleteButton);
+        controls.append(renameButton, toggleButton, volumeLabel, deleteButton);
         row.appendChild(controls);
       } else if (canManagePlacedAsset && !isBgmLayer) {
         const controls = document.createElement('div');
