@@ -239,8 +239,8 @@ async function startNpcMicMonitor() {
       analyser.getFloatTimeDomainData(samples);
       const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
       const now = performance.now();
-      if (!state.npcSpeaking && rms >= 0.035) setNpcSpeakingState(true, true);
-      if (state.npcSpeaking && rms < 0.018) {
+      if (!state.npcSpeaking && rms >= 0.02) setNpcSpeakingState(true, true);
+      if (state.npcSpeaking && rms < 0.012) {
         if (!quietSince) quietSince = now;
         if (now - quietSince >= 180) setNpcSpeakingState(false, true);
       } else {
