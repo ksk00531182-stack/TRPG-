@@ -180,7 +180,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', npcSpeaking: false, npcMicTargetAssetId: '', scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -232,6 +232,8 @@ function loadPersistedRooms() {
         boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false, bgmVolume: Number.isFinite(Number(asset.bgmVolume)) ? Math.max(0, Math.min(1, Number(asset.bgmVolume))) : 1 })) : [],
         boardLayoutSaves: normalizeBoardLayoutSaves(storedBoardLayoutSaves),
         blackoutMode: ['black', 'white'].includes(savedRoom.blackoutMode) ? savedRoom.blackoutMode : 'off',
+        npcSpeaking: false,
+        npcMicTargetAssetId: '',
         scenario: normalizeScenarioPages(savedRoom.scenario),
         inviteToken: savedRoom.inviteToken,
         gmToken,
@@ -462,6 +464,12 @@ function clearSocketRoom(socket) {
   if (previousRoomId) {
     const previousRoom = rooms.get(previousRoomId);
     if (previousRoom) {
+      if (socket.data.member?.role === 'gm' && (previousRoom.npcSpeaking || previousRoom.npcMicTargetAssetId)) {
+        previousRoom.npcSpeaking = false;
+        previousRoom.npcMicTargetAssetId = '';
+        io.to(`room:${previousRoomId}`).emit('npc-speaking', false);
+        io.to(`room:${previousRoomId}`).emit('npc-mic-target', '');
+      }
       previousRoom.members.delete(socket.id);
       broadcastMembers(previousRoomId);
     }
@@ -491,10 +499,45 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
-  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off', hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off', npcSpeaking: Boolean(room.npcSpeaking), npcMicTargetAssetId: room.npcMicTargetAssetId || '', hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
 io.on('connection', (socket) => {
+  socket.on('set-npc-mic-target', ({ assetId } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm' || typeof assetId !== 'string') {
+      acknowledge?.({ ok: false, error: 'NPCのマイク対象を変更できません。' });
+      return;
+    }
+    if (assetId && !room.boardAssets.some((asset) => asset.id === assetId && asset.category === 'npcs')) {
+      acknowledge?.({ ok: false, error: '対象のNPC画像が見つかりません。' });
+      return;
+    }
+    const nextTargetAssetId = assetId || '';
+    if (room.npcMicTargetAssetId !== nextTargetAssetId) {
+      room.npcMicTargetAssetId = nextTargetAssetId;
+      if (room.npcSpeaking) {
+        room.npcSpeaking = false;
+        io.to(`room:${id}`).emit('npc-speaking', false);
+      }
+      io.to(`room:${id}`).emit('npc-mic-target', nextTargetAssetId);
+    }
+    acknowledge?.({ ok: true, assetId: nextTargetAssetId });
+  });
+
+  socket.on('set-npc-speaking', ({ speaking } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm' || typeof speaking !== 'boolean' || (speaking && !room.npcMicTargetAssetId)) {
+      acknowledge?.({ ok: false, error: 'NPCの発話状態を変更できません。' });
+      return;
+    }
+    room.npcSpeaking = speaking;
+    io.to(`room:${id}`).emit('npc-speaking', speaking);
+    acknowledge?.({ ok: true, speaking });
+  });
+
   socket.on('set-board-blackout', ({ mode } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
@@ -573,6 +616,12 @@ io.on('connection', (socket) => {
       ...JSON.parse(JSON.stringify(savedLayout.boardAssets)),
       ...JSON.parse(JSON.stringify(preservedAssets))
     ];
+    if (room.npcMicTargetAssetId && !room.boardAssets.some((asset) => asset.id === room.npcMicTargetAssetId && asset.category === 'npcs')) {
+      room.npcSpeaking = false;
+      room.npcMicTargetAssetId = '';
+      io.to(`room:${id}`).emit('npc-speaking', false);
+      io.to(`room:${id}`).emit('npc-mic-target', '');
+    }
     touchRoom(room);
     io.to(`room:${id}`).emit('board-assets', room.boardAssets);
     acknowledge?.({ ok: true, saveName: savedLayout.name, boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off' });
@@ -919,6 +968,12 @@ io.on('connection', (socket) => {
     if (!canManageBoardAssets(member, [room.boardAssets[assetIndex]])) {
       acknowledge?.({ ok: false, error: '担当キャラクター以外は削除できません。' });
       return;
+    }
+    if (room.npcMicTargetAssetId === assetId) {
+      room.npcSpeaking = false;
+      room.npcMicTargetAssetId = '';
+      io.to(`room:${id}`).emit('npc-speaking', false);
+      io.to(`room:${id}`).emit('npc-mic-target', '');
     }
     const [{ groupId, differenceSetId }] = room.boardAssets.splice(assetIndex, 1);
     if (differenceSetId) {

@@ -57,9 +57,12 @@ const elements = {
   boardDifferenceMenu: $('#boardDifferenceMenu'),
   layerBox: $('#layerBox'),
   characterLayerBox: $('#characterLayerBox'),
+  npcLayerBox: $('#npcLayerBox'),
+  npcMicButton: $('#npcMicButton'),
   bgmLayerBox: $('#bgmLayerBox'),
   layerList: $('#layerList'),
   characterLayerList: $('#characterLayerList'),
+  npcLayerList: $('#npcLayerList'),
   bgmLayerList: $('#bgmLayerList'),
   layerGroupForm: $('#layerGroupForm'),
   layerGroupName: $('#layerGroupName'),
@@ -67,6 +70,9 @@ const elements = {
   characterLayerGroupForm: $('#characterLayerGroupForm'),
   characterLayerGroupName: $('#characterLayerGroupName'),
   characterLayerArrangeTools: $('#characterLayerArrangeTools'),
+  npcLayerGroupForm: $('#npcLayerGroupForm'),
+  npcLayerGroupName: $('#npcLayerGroupName'),
+  npcLayerArrangeTools: $('#npcLayerArrangeTools'),
   playAreaAssetPanel: $('#playAreaAssetPanel'),
   pcSidebarTab: $('#pcSidebarTab'),
   layerSidebarTab: $('#layerSidebarTab'),
@@ -125,6 +131,13 @@ const state = {
   characterStatuses: [],
   assets: [],
   boardAssets: [],
+  npcSpeaking: false,
+  npcMicTargetAssetId: '',
+  npcMicMonitoring: false,
+  npcMicStream: null,
+  npcMicAudioContext: null,
+  npcMicAnalyser: null,
+  npcMicFrame: 0,
   blackoutMode: 'off',
   boardLayoutSaves: [],
   bgmPlayers: new Map(),
@@ -154,6 +167,92 @@ const state = {
 // ヘルパー: エラーメッセージ等のステータス表示
 function setStatus(message) {
   if (elements.status) elements.status.textContent = message;
+}
+
+function setNpcSpeakingState(speaking, broadcast = false) {
+  state.npcSpeaking = Boolean(speaking);
+  document.querySelectorAll('#boardAssets .board-object').forEach((object) => {
+    object.classList.toggle('is-npc-speaking', state.npcSpeaking && object.dataset.assetId === state.npcMicTargetAssetId);
+  });
+  if (elements.npcMicButton) {
+    elements.npcMicButton.setAttribute('aria-pressed', String(state.npcMicMonitoring));
+    elements.npcMicButton.classList.toggle('is-monitoring', state.npcMicMonitoring);
+  }
+  if (broadcast) {
+    socket.emit('set-npc-speaking', { speaking: state.npcSpeaking }, (result) => {
+      if (!result?.ok) {
+        setNpcSpeakingState(false);
+        setStatus(result?.error || 'NPCの発話状態を共有できませんでした');
+      }
+    });
+  }
+}
+
+function stopNpcMicMonitor({ broadcast = true } = {}) {
+  state.npcMicMonitoring = false;
+  if (state.npcMicFrame) cancelAnimationFrame(state.npcMicFrame);
+  state.npcMicFrame = 0;
+  state.npcMicAnalyser = null;
+  state.npcMicStream?.getTracks().forEach((track) => track.stop());
+  state.npcMicStream = null;
+  if (state.npcMicAudioContext && state.npcMicAudioContext.state !== 'closed') {
+    void state.npcMicAudioContext.close().catch(() => {});
+  }
+  state.npcMicAudioContext = null;
+  if (state.npcSpeaking) setNpcSpeakingState(false, broadcast);
+  else setNpcSpeakingState(false);
+}
+
+async function startNpcMicMonitor() {
+  if (state.currentRole !== 'gm' || state.npcMicMonitoring) return;
+  if (!state.npcMicTargetAssetId) {
+    setStatus('NPC画像を右クリックしてマイク反応対象を選んでください');
+    return;
+  }
+  state.npcMicMonitoring = true;
+  setNpcSpeakingState(state.npcSpeaking);
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('このブラウザーではマイクを使用できません');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!state.npcMicMonitoring) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) throw new Error('このブラウザーでは音量を検知できません');
+    state.npcMicStream = stream;
+    const audioContext = new AudioContextConstructor();
+    state.npcMicAudioContext = audioContext;
+    await audioContext.resume();
+    if (!state.npcMicMonitoring) {
+      stopNpcMicMonitor();
+      return;
+    }
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+    state.npcMicAnalyser = analyser;
+    const samples = new Float32Array(analyser.fftSize);
+    let quietSince = 0;
+    const detectVoice = () => {
+      if (!state.npcMicMonitoring || !state.npcMicAnalyser) return;
+      analyser.getFloatTimeDomainData(samples);
+      const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+      const now = performance.now();
+      if (!state.npcSpeaking && rms >= 0.035) setNpcSpeakingState(true, true);
+      if (state.npcSpeaking && rms < 0.018) {
+        if (!quietSince) quietSince = now;
+        if (now - quietSince >= 180) setNpcSpeakingState(false, true);
+      } else {
+        quietSince = 0;
+      }
+      state.npcMicFrame = requestAnimationFrame(detectVoice);
+    };
+    detectVoice();
+  } catch (error) {
+    stopNpcMicMonitor();
+    setStatus(error.message || 'マイクを使用できませんでした');
+  }
 }
 
 function renderBoardBlackout(mode = state.blackoutMode) {
@@ -1018,7 +1117,7 @@ window.addEventListener('resize', () => {
 });
 
 function renderBoardAssets(boardAssets = state.boardAssets) {
-  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.bgmLayerBox) return;
+  if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.npcLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.npcLayerBox || !elements.bgmLayerBox) return;
   if (elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   const activeBgmIds = new Set(state.boardAssets.filter((asset) => asset.category === 'bgm').map((asset) => asset.id));
@@ -1036,27 +1135,33 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
   elements.characterBoardAssets.innerHTML = '';
   elements.layerList.innerHTML = '';
   elements.characterLayerList.innerHTML = '';
+  elements.npcLayerList.innerHTML = '';
   elements.bgmLayerList.innerHTML = '';
-  const imageLayers = state.boardAssets.filter((asset) => asset.category !== 'bgm' && asset.category !== 'characters');
+  const imageLayers = state.boardAssets.filter((asset) => !['bgm', 'characters', 'npcs'].includes(asset.category));
   const characterLayers = state.boardAssets.filter((asset) => asset.category === 'characters');
+  const npcLayers = state.boardAssets.filter((asset) => asset.category === 'npcs');
   const visibleCharacterLayers = state.currentRole === 'gm'
     ? characterLayers
     : characterLayers.filter((asset) => asset.assignedPlayerId && asset.assignedPlayerId === state.playerId);
   const bgmLayers = state.boardAssets.filter((asset) => asset.category === 'bgm');
   if (elements.layerBox) elements.layerBox.hidden = state.currentRole !== 'gm' || imageLayers.length === 0;
   elements.characterLayerBox.hidden = state.currentRole !== 'gm' || characterLayers.length === 0;
+  elements.npcLayerBox.hidden = state.currentRole !== 'gm' || npcLayers.length === 0;
   elements.bgmLayerBox.hidden = state.currentRole !== 'gm' || bgmLayers.length === 0;
   renderCharacterStatuses();
   const selectedAssets = state.boardAssets.filter((asset) => state.selectedLayerIds.has(asset.id));
   const selectedCategories = new Set(selectedAssets.map((asset) => asset.category));
   const canOperateSelectedAssets = selectedAssets.length >= 2 && selectedCategories.size === 1 && canManageLayerAssets(selectedAssets);
   const selectedCharacters = canOperateSelectedAssets && selectedCategories.has('characters');
+  const selectedNpcs = canOperateSelectedAssets && selectedCategories.has('npcs');
   const selectedMaterials = state.currentRole === 'gm' && selectedAssets.length >= 2
-    && selectedCategories.size === 1 && !selectedCategories.has('characters') && !selectedCategories.has('bgm');
+    && selectedCategories.size === 1 && !selectedCategories.has('characters') && !selectedCategories.has('npcs') && !selectedCategories.has('bgm');
   if (elements.layerGroupForm) elements.layerGroupForm.hidden = !selectedMaterials;
-  if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = !canOperateSelectedAssets || selectedCategories.has('characters') || selectedCategories.has('bgm');
+  if (elements.layerArrangeTools) elements.layerArrangeTools.hidden = !canOperateSelectedAssets || selectedCategories.has('characters') || selectedCategories.has('npcs') || selectedCategories.has('bgm');
   if (elements.characterLayerGroupForm) elements.characterLayerGroupForm.hidden = !selectedCharacters;
   if (elements.characterLayerArrangeTools) elements.characterLayerArrangeTools.hidden = !selectedCharacters;
+  if (elements.npcLayerGroupForm) elements.npcLayerGroupForm.hidden = !selectedNpcs;
+  if (elements.npcLayerArrangeTools) elements.npcLayerArrangeTools.hidden = !selectedNpcs;
 
   state.boardAssets.forEach((placedAsset, index) => {
     if (placedAsset.differenceSetId && !placedAsset.differenceActive) return;
@@ -1081,7 +1186,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     const boardLayer = placedAsset.category === 'characters' ? elements.characterBoardAssets : elements.boardAssets;
     const isSelected = state.selectedBoardAssetId === placedAsset.id;
     const isMultiSelected = state.selectedLayerIds.has(placedAsset.id);
-    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
+    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId && state.npcSpeaking ? ' is-npc-speaking' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
     object.dataset.assetId = placedAsset.id;
     object.style.zIndex = String(index + 1);
     object.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
@@ -1121,6 +1226,14 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     image.src = asset.url;
     object.append(image, hitArea);
     object.addEventListener('contextmenu', (event) => {
+      if (placedAsset.category === 'npcs' && state.currentRole === 'gm') {
+        event.preventDefault();
+        const differenceAssets = placedAsset.differenceSetId
+          ? state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId)
+          : [];
+        showBoardDifferenceMenu(event, placedAsset, differenceAssets.length > 1 ? differenceAssets : []);
+        return;
+      }
       if (!placedAsset.differenceSetId) return;
       const differenceAssets = state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId);
       if (differenceAssets.length < 2 || !canManageLayerAssets(differenceAssets)) return;
@@ -1236,7 +1349,8 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
 
   const layerSections = [
     { assets: [...visibleCharacterLayers].reverse(), list: elements.characterLayerList },
-    { assets: [...state.boardAssets].reverse().filter((asset) => asset.category !== 'characters' && asset.category !== 'bgm'), list: elements.layerList },
+    { assets: [...state.boardAssets].reverse().filter((asset) => !['characters', 'npcs', 'bgm'].includes(asset.category)), list: elements.layerList },
+    { assets: [...npcLayers].reverse(), list: elements.npcLayerList },
     { assets: [...state.boardAssets].reverse().filter((asset) => asset.category === 'bgm'), list: elements.bgmLayerList }
   ];
   layerSections.forEach(({ assets: displayOrder, list }) => {
@@ -1314,7 +1428,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         }
       }
       const row = document.createElement('li');
-      const isVisualLayer = list === elements.layerList || list === elements.characterLayerList;
+      const isVisualLayer = list === elements.layerList || list === elements.characterLayerList || list === elements.npcLayerList;
       row.className = `layer-row${placedAsset.groupId && !isBgmLayer ? ' is-grouped' : ''}${placedAsset.differenceActive ? ' is-difference-active' : ''}${placedAsset.locked && !isBgmLayer ? ' is-locked' : ''}${isBgmLayer ? ' is-bgm-layer' : ''}${isVisualLayer ? ' is-visual-layer' : ''}`;
       row.hidden = Boolean(activeGroupId && state.collapsedGroupIds.has(activeGroupId));
       row.dataset.assetId = placedAsset.id;
@@ -1453,6 +1567,24 @@ function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
   const menu = elements.boardDifferenceMenu;
   if (!menu || !elements.playArea) return;
   menu.innerHTML = '';
+  if (placedAsset.category === 'npcs' && state.currentRole === 'gm') {
+    const isMicTarget = state.npcMicTargetAssetId === placedAsset.id;
+    const micOption = document.createElement('button');
+    micOption.type = 'button';
+    micOption.className = 'board-difference-option npc-mic-context-option';
+    micOption.setAttribute('role', 'menuitemradio');
+    micOption.setAttribute('aria-checked', String(isMicTarget));
+    micOption.textContent = isMicTarget
+      ? 'マイク反応をOFF'
+      : state.npcMicTargetAssetId ? 'マイク反応をこのNPCに切り替え' : 'マイク反応をON';
+    micOption.addEventListener('click', () => {
+      menu.hidden = true;
+      socket.emit('set-npc-mic-target', { assetId: isMicTarget ? '' : placedAsset.id }, (result) => {
+        if (!result?.ok) setStatus(result?.error || 'NPCのマイク対象を変更できませんでした');
+      });
+    });
+    menu.appendChild(micOption);
+  }
   differenceAssets.forEach((differenceAsset) => {
     const asset = state.assets.find((item) => item.key === differenceAsset.key);
     const button = document.createElement('button');
@@ -1629,6 +1761,9 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  state.npcMicTargetAssetId = result.npcMicTargetAssetId || '';
+  state.npcSpeaking = Boolean(result.npcSpeaking) && Boolean(state.npcMicTargetAssetId);
+  state.npcMicButton.hidden = role !== 'gm';
   renderBoardBlackout(result.blackoutMode);
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   state.characterSheetSystemId = result.systemId || '';
@@ -2318,13 +2453,24 @@ elements.playAreaTabs?.forEach((tab) => {
   });
 });
 
+elements.npcMicButton?.addEventListener('click', () => {
+  if (state.npcMicMonitoring) stopNpcMicMonitor();
+  else void startNpcMicMonitor();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopNpcMicMonitor();
+});
+
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
 elements.layerSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('layers'));
 elements.assetCategory?.addEventListener('change', () => renderAssets(state.assets));
 
 // Socket Events
 socket.on('connect', () => { setStatus('接続中'); });
-socket.on('disconnect', () => { setStatus('接続が切れています'); });
+socket.on('disconnect', () => {
+  stopNpcMicMonitor({ broadcast: false });
+  setStatus('接続が切れています');
+});
 socket.on('history', (messages) => {
   if (elements.messageList) elements.messageList.innerHTML = '';
   if (Array.isArray(messages)) messages.forEach(addMessage);
@@ -2408,6 +2554,13 @@ socket.on('board-assets', (boardAssets) => {
   if (state.currentRole === 'pc' && assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
 });
 socket.on('board-blackout', renderBoardBlackout);
+socket.on('npc-speaking', (speaking) => setNpcSpeakingState(speaking));
+socket.on('npc-mic-target', (assetId) => {
+  const nextTargetAssetId = typeof assetId === 'string' ? assetId : '';
+  if (nextTargetAssetId !== state.npcMicTargetAssetId) setNpcSpeakingState(false);
+  state.npcMicTargetAssetId = nextTargetAssetId;
+  if (!nextTargetAssetId && state.npcMicMonitoring) stopNpcMicMonitor({ broadcast: false });
+});
 socket.on('board-layout-saves-updated', (saves) => {
   if (state.currentRole === 'gm') renderBoardLayoutSaves(saves);
 });
@@ -2466,7 +2619,7 @@ if (elements.assetList) {
   });
 }
 
-const layerBoxes = [elements.layerBox, elements.characterLayerBox].filter(Boolean);
+const layerBoxes = [elements.layerBox, elements.characterLayerBox, elements.npcLayerBox].filter(Boolean);
 layerBoxes.forEach((layerBox) => {
   layerBox.addEventListener('dblclick', (event) => {
     if (event.target.closest('button, input')) return;
@@ -2635,7 +2788,7 @@ const enableLayerBoxDragging = (box, handle, handleSelector = '') => {
 
 enableLayerBoxDragging(elements.characterStatusBoxes, elements.characterStatusBoxes, '.character-status-card h3');
 
-const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLayerArrangeTools].filter(Boolean);
+const layerArrangeToolsets = [elements.layerArrangeTools, elements.characterLayerArrangeTools, elements.npcLayerArrangeTools].filter(Boolean);
 layerArrangeToolsets.forEach((tools) => {
   tools.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-layer-batch]');
@@ -2653,7 +2806,7 @@ layerArrangeToolsets.forEach((tools) => {
 
 elements.playArea?.addEventListener('click', (event) => {
   if (!event.target.closest('.board-difference-menu') && elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
-  if (event.target.closest('.board-object, .board-difference-menu, .play-area-tools, .layer-box, .character-layer-box, .bgm-layer-box')) return;
+  if (event.target.closest('.board-object, .board-difference-menu, .play-area-tools, .layer-box, .character-layer-box, .npc-layer-box, .bgm-layer-box')) return;
   if (!state.selectedLayerIds.size && !state.selectedBoardAssetId) return;
   state.selectedLayerIds.clear();
   state.selectedBoardAssetId = '';
@@ -2662,7 +2815,8 @@ elements.playArea?.addEventListener('click', (event) => {
 
 const layerGroupForms = [
   [elements.layerGroupForm, elements.layerGroupName],
-  [elements.characterLayerGroupForm, elements.characterLayerGroupName]
+  [elements.characterLayerGroupForm, elements.characterLayerGroupName],
+  [elements.npcLayerGroupForm, elements.npcLayerGroupName]
 ];
 layerGroupForms.forEach(([form, nameInput]) => {
   form?.addEventListener('submit', (event) => {
