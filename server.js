@@ -180,7 +180,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', npcSpeaking: false, npcMicTargetAssetId: '', scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', npcSpeaking: false, npcMicTargetAssetId: '', speakingPlayers: new Map(), scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -234,6 +234,7 @@ function loadPersistedRooms() {
         blackoutMode: ['black', 'white'].includes(savedRoom.blackoutMode) ? savedRoom.blackoutMode : 'off',
         npcSpeaking: false,
         npcMicTargetAssetId: '',
+        speakingPlayers: new Map(),
         scenario: normalizeScenarioPages(savedRoom.scenario),
         inviteToken: savedRoom.inviteToken,
         gmToken,
@@ -470,6 +471,16 @@ function clearSocketRoom(socket) {
         io.to(`room:${previousRoomId}`).emit('npc-speaking', false);
         io.to(`room:${previousRoomId}`).emit('npc-mic-target', '');
       }
+      if (socket.data.member?.role === 'pc' && socket.data.member.playerId) {
+        const speakingSockets = previousRoom.speakingPlayers?.get(socket.data.member.playerId);
+        if (speakingSockets) {
+          speakingSockets.delete(socket.id);
+          if (!speakingSockets.size) {
+            previousRoom.speakingPlayers.delete(socket.data.member.playerId);
+            io.to(`room:${previousRoomId}`).emit('player-speaking', { playerId: socket.data.member.playerId, speaking: false });
+          }
+        }
+      }
       previousRoom.members.delete(socket.id);
       broadcastMembers(previousRoomId);
     }
@@ -499,10 +510,41 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
-  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off', npcSpeaking: Boolean(room.npcSpeaking), npcMicTargetAssetId: room.npcMicTargetAssetId || '', hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off', npcSpeaking: Boolean(room.npcSpeaking), npcMicTargetAssetId: room.npcMicTargetAssetId || '', speakingPlayerIds: [...(room.speakingPlayers?.keys() || [])], hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
 io.on('connection', (socket) => {
+  socket.on('set-player-speaking', ({ speaking } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    const member = socket.data.member;
+    if (!room || member?.role !== 'pc' || !member.playerId || typeof speaking !== 'boolean') {
+      acknowledge?.({ ok: false, error: 'PCの発話状態を変更できません。' });
+      return;
+    }
+    const hasAssignedCharacter = room.boardAssets.some((asset) =>
+      asset.category === 'characters' && asset.assignedPlayerId === member.playerId);
+    if (speaking && !hasAssignedCharacter) {
+      acknowledge?.({ ok: false, error: '割り当てられたキャラクターが盤面にありません。' });
+      return;
+    }
+    if (!room.speakingPlayers) room.speakingPlayers = new Map();
+    let speakingSockets = room.speakingPlayers.get(member.playerId);
+    if (speaking && !speakingSockets) {
+      speakingSockets = new Set();
+      room.speakingPlayers.set(member.playerId, speakingSockets);
+    }
+    const wasSpeaking = Boolean(speakingSockets?.size);
+    if (speaking) speakingSockets.add(socket.id);
+    else speakingSockets?.delete(socket.id);
+    const isSpeaking = Boolean(speakingSockets?.size);
+    if (!isSpeaking) room.speakingPlayers.delete(member.playerId);
+    if (wasSpeaking !== isSpeaking) {
+      io.to(`room:${id}`).emit('player-speaking', { playerId: member.playerId, speaking: isSpeaking });
+    }
+    acknowledge?.({ ok: true, speaking: isSpeaking });
+  });
+
   socket.on('set-npc-mic-target', ({ assetId } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);

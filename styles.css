@@ -322,7 +322,7 @@
 .board-object.is-multi-selected:not(.is-selected) { outline: 1px dashed var(--green); outline-offset: 2px; }
 .board-object.is-locked { cursor: not-allowed; }
 .board-object .board-asset-image { position: static; display: block; width: 100%; height: 100%; object-fit: contain; transform: none; pointer-events: none; }
-.board-object.is-npc-speaking .board-asset-image { animation: npc-voice-bob 220ms ease-in-out infinite alternate; }
+.board-object.is-npc-speaking .board-asset-image, .board-object.is-character-speaking .board-asset-image { animation: npc-voice-bob 220ms ease-in-out infinite alternate; }
 @keyframes npc-voice-bob { to { transform: translateY(-3px); } }
 .board-object .board-asset-hitarea { position: absolute; z-index: 1; inset: 0; pointer-events: auto; touch-action: none; }
 .board-object.is-editable .board-asset-hitarea { cursor: grab; }

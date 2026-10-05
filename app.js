@@ -137,6 +137,12 @@ const state = {
   npcMicAudioContext: null,
   npcMicAnalyser: null,
   npcMicFrame: 0,
+  playerSpeakingIds: new Set(),
+  playerMicMonitoring: false,
+  playerMicStream: null,
+  playerMicAudioContext: null,
+  playerMicAnalyser: null,
+  playerMicFrame: 0,
   blackoutMode: 'off',
   boardLayoutSaves: [],
   bgmPlayers: new Map(),
@@ -259,6 +265,96 @@ async function startNpcMicMonitor() {
     detectVoice();
   } catch (error) {
     clearNpcMicTarget();
+    setStatus(error.message || 'マイクを使用できませんでした');
+  }
+}
+
+function setPlayerSpeakingState(playerId, speaking, broadcast = false) {
+  if (!playerId) return;
+  if (speaking) state.playerSpeakingIds.add(playerId);
+  else state.playerSpeakingIds.delete(playerId);
+  document.querySelectorAll('#characterBoardAssets .board-object').forEach((object) => {
+    object.classList.toggle('is-character-speaking', object.dataset.assignedPlayerId === playerId && speaking);
+  });
+  if (broadcast) {
+    socket.emit('set-player-speaking', { speaking }, (result) => {
+      if (!result?.ok) {
+        setPlayerSpeakingState(playerId, false);
+        setStatus(result?.error || 'キャラクターの発話状態を共有できませんでした');
+      }
+    });
+  }
+}
+
+function hasAssignedCharacterOnBoard(playerId = state.playerId) {
+  return Boolean(playerId && state.boardAssets.some((asset) =>
+    asset.category === 'characters' && asset.assignedPlayerId === playerId));
+}
+
+function stopPlayerMicMonitor({ broadcast = true } = {}) {
+  state.playerMicMonitoring = false;
+  if (state.playerMicFrame) cancelAnimationFrame(state.playerMicFrame);
+  state.playerMicFrame = 0;
+  state.playerMicAnalyser = null;
+  state.playerMicStream?.getTracks().forEach((track) => track.stop());
+  state.playerMicStream = null;
+  if (state.playerMicAudioContext && state.playerMicAudioContext.state !== 'closed') {
+    void state.playerMicAudioContext.close().catch(() => {});
+  }
+  state.playerMicAudioContext = null;
+  if (state.playerSpeakingIds.has(state.playerId)) setPlayerSpeakingState(state.playerId, false, broadcast);
+}
+
+async function startPlayerMicMonitor() {
+  if (state.currentRole !== 'pc' || state.playerMicMonitoring || !hasAssignedCharacterOnBoard()) return;
+  state.playerMicMonitoring = true;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('このブラウザーではマイクを使用できません');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!state.playerMicMonitoring) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) throw new Error('このブラウザーでは音量を検知できません');
+    state.playerMicStream = stream;
+    const audioContext = new AudioContextConstructor();
+    state.playerMicAudioContext = audioContext;
+    await audioContext.resume();
+    if (!state.playerMicMonitoring) {
+      stopPlayerMicMonitor();
+      return;
+    }
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+    state.playerMicAnalyser = analyser;
+    const samples = new Float32Array(analyser.fftSize);
+    let quietSince = 0;
+    let speaking = false;
+    const detectVoice = () => {
+      if (!state.playerMicMonitoring || !state.playerMicAnalyser) return;
+      analyser.getFloatTimeDomainData(samples);
+      const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+      const now = performance.now();
+      if (!speaking && rms >= 0.02) {
+        speaking = true;
+        setPlayerSpeakingState(state.playerId, true, true);
+      }
+      if (speaking && rms < 0.012) {
+        if (!quietSince) quietSince = now;
+        if (now - quietSince >= 180) {
+          speaking = false;
+          setPlayerSpeakingState(state.playerId, false, true);
+        }
+      } else {
+        quietSince = 0;
+      }
+      state.playerMicFrame = requestAnimationFrame(detectVoice);
+    };
+    detectVoice();
+  } catch (error) {
+    stopPlayerMicMonitor();
     setStatus(error.message || 'マイクを使用できませんでした');
   }
 }
@@ -1194,8 +1290,9 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     const boardLayer = placedAsset.category === 'characters' ? elements.characterBoardAssets : elements.boardAssets;
     const isSelected = state.selectedBoardAssetId === placedAsset.id;
     const isMultiSelected = state.selectedLayerIds.has(placedAsset.id);
-    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId ? ' is-npc-mic-target' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId && state.npcSpeaking ? ' is-npc-speaking' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
+    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${placedAsset.category === 'characters' && state.playerSpeakingIds.has(placedAsset.assignedPlayerId) ? ' is-character-speaking' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId ? ' is-npc-mic-target' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId && state.npcSpeaking ? ' is-npc-speaking' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
     object.dataset.assetId = placedAsset.id;
+    object.dataset.assignedPlayerId = placedAsset.assignedPlayerId || '';
     object.style.zIndex = String(index + 1);
     object.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
     object.style.top = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.y) || 0.5)) * 100}%`;
@@ -1779,6 +1876,7 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  state.playerSpeakingIds = new Set(Array.isArray(result.speakingPlayerIds) ? result.speakingPlayerIds : []);
   state.npcMicTargetAssetId = result.npcMicTargetAssetId || '';
   state.npcSpeaking = Boolean(result.npcSpeaking) && Boolean(state.npcMicTargetAssetId);
   renderBoardBlackout(result.blackoutMode);
@@ -1845,6 +1943,7 @@ function enterRoom(result, role) {
 
   if (elements.messageInput) elements.messageInput.focus();
   loadAssets();
+  if (role === 'pc') void startPlayerMicMonitor();
 }
 
 // Global Event Listeners
@@ -2472,6 +2571,7 @@ elements.playAreaTabs?.forEach((tab) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearNpcMicTarget();
+  if (document.hidden) stopPlayerMicMonitor();
 });
 
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
@@ -2482,6 +2582,7 @@ elements.assetCategory?.addEventListener('change', () => renderAssets(state.asse
 socket.on('connect', () => { setStatus('接続中'); });
 socket.on('disconnect', () => {
   stopNpcMicMonitor({ broadcast: false });
+  stopPlayerMicMonitor({ broadcast: false });
   setStatus('接続が切れています');
 });
 socket.on('history', (messages) => {
@@ -2564,10 +2665,15 @@ socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime, volum
 socket.on('board-assets', (boardAssets) => {
   const assets = Array.isArray(boardAssets) ? boardAssets : [];
   renderBoardAssets(assets);
-  if (state.currentRole === 'pc' && assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
+  if (state.currentRole === 'pc') {
+    if (assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
+    if (hasAssignedCharacterOnBoard()) void startPlayerMicMonitor();
+    else if (state.playerMicMonitoring) stopPlayerMicMonitor();
+  }
 });
 socket.on('board-blackout', renderBoardBlackout);
 socket.on('npc-speaking', (speaking) => setNpcSpeakingState(speaking));
+socket.on('player-speaking', ({ playerId, speaking } = {}) => setPlayerSpeakingState(playerId, speaking));
 socket.on('npc-mic-target', (assetId) => {
   const nextTargetAssetId = typeof assetId === 'string' ? assetId : '';
   if (nextTargetAssetId !== state.npcMicTargetAssetId) {
