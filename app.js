@@ -1,15 +1,22 @@
 const params = new URLSearchParams(location.search);
 const socket = io();
+const defaultRoomSynopsis = 'GMとPCが、ルーム内のメッセージでつながるシンプルなセッション通信室。';
 
 const $ = (selector) => document.querySelector(selector);
 
 // DOM Elements
 const elements = {
   entry: $('#entry'),
+  entryHeadline: $('#entryHeadline'),
+  inviteRoomDetails: $('#inviteRoomDetails'),
+  inviteSystemName: $('#inviteSystemName'),
+  inviteRoomTitle: $('#inviteRoomTitle'),
+  entryIntro: $('#entryIntro'),
   room: $('#room'),
   joinForm: $('#joinForm'),
   roomIdInput: $('#roomId'),
   roomTitleInput: $('#roomTitle'),
+  roomSynopsisInput: $('#roomSynopsis'),
   playerIdInput: $('#playerId'),
   playerIdLabel: $('#playerIdLabel'),
   systemIdInput: $('#systemId'),
@@ -30,8 +37,15 @@ const elements = {
   secretDiceInput: $('#secretDiceInput'),
   diceActorOption: $('#diceActorOption'),
   diceActor: $('#diceActor'),
+  emokloreManualRoll: $('#emokloreManualRoll'),
+  emokloreManualRollForm: $('#emokloreManualRollForm'),
+  emokloreDiceCount: $('#emokloreDiceCount'),
+  emokloreSuccessValue: $('#emokloreSuccessValue'),
+  emokloreManualRollStatus: $('#emokloreManualRollStatus'),
   skillRollSection: $('#skillRollSection'),
   skillRollMode: $('#skillRollMode'),
+  emokloreBonusDiceOption: $('#emokloreBonusDiceOption'),
+  emokloreBonusDiceInput: $('#emokloreBonusDiceInput'),
   skillRollList: $('#skillRollList'),
   memoPanel: $('#memoPanel'),
   memoInput: $('#memoInput'),
@@ -97,7 +111,6 @@ const elements = {
   characterSheetButton: $('#characterSheetButton'),
   scenarioButton: $('#scenarioButton'),
   scenarioDialog: $('#scenarioDialog'),
-  scenarioClose: $('#scenarioClose'),
   scenarioForm: $('#scenarioForm'),
   scenarioTabs: $('#scenarioTabs'),
   scenarioPageTitle: $('#scenarioPageTitle'),
@@ -172,6 +185,18 @@ const state = {
 // ヘルパー: エラーメッセージ等のステータス表示
 function setStatus(message) {
   if (elements.status) elements.status.textContent = message;
+}
+
+function renderKanjiAccentedText(element, value) {
+  if (!element) return;
+  const content = document.createDocumentFragment();
+  Array.from(value || '').forEach((character) => {
+    const span = document.createElement('span');
+    if (/\p{Script=Han}/u.test(character)) span.className = 'invite-kanji';
+    span.textContent = character;
+    content.appendChild(span);
+  });
+  element.replaceChildren(content);
 }
 
 function setNpcSpeakingState(speaking, broadcast = false) {
@@ -561,6 +586,16 @@ function parseDiceNotation(value) {
   return { count, sides, modifier, expression: normalized };
 }
 
+function parseEmokloreSuccessNotation(countValue, successValue) {
+  const values = [countValue, successValue].map((value) => String(value || '').normalize('NFKC'));
+  if (values.some((value) => !/^\d+$/.test(value))) return null;
+  const [count, target] = values.map(Number);
+  const sides = 10;
+  if (!Number.isInteger(count) || count < 1 || count > 20
+    || !Number.isInteger(target) || target < 1 || target > sides) return null;
+  return { count, sides, successValue: target, expression: `${count}D${sides}` };
+}
+
 const diceRollSoundPath = '/assets/sounds/dice/roll.mp3';
 const diceSoundPaths = Object.freeze({
   success: '/assets/sounds/dice/success.mp3',
@@ -668,6 +703,7 @@ function renderMembers(members) {
     allOption.textContent = '全体チャット';
     elements.messageTarget.appendChild(allOption);
     members.forEach((member) => {
+      if (member.role === 'npc') return;
       if (member.role === 'gm' && state.currentRole === 'gm') return;
       if (member.role === 'pc' && member.playerId === state.playerId) return;
       const option = document.createElement('option');
@@ -677,6 +713,7 @@ function renderMembers(members) {
     });
   }
   if (elements.diceActor) {
+    const selectedActorId = elements.diceActor.value;
     elements.diceActor.innerHTML = '<option value="">GM</option>';
     members.filter((member) => member.role === 'npc').forEach((npc) => {
       const option = document.createElement('option');
@@ -684,6 +721,9 @@ function renderMembers(members) {
       option.textContent = npc.name;
       elements.diceActor.appendChild(option);
     });
+    if ([...elements.diceActor.options].some((option) => option.value === selectedActorId)) {
+      elements.diceActor.value = selectedActorId;
+    }
   }
   loadCharacterStatuses();
   if (state.currentRole === 'gm' && state.assets.length) renderAssets(state.assets);
@@ -721,14 +761,17 @@ function renderCharacterStatuses() {
       headingRow.appendChild(visibilityButton);
     }
     const values = document.createElement('dl');
-    [['HP', status.hp], ['SAN', status.san], ['幸運', status.luck]].forEach(([label, value]) => {
+    const statusRows = status.stats || [['HP', status.hp], ['SAN', status.san], ['幸運', status.luck]];
+    statusRows.forEach(([label, value, field]) => {
       const row = document.createElement('div');
       const term = document.createElement('dt');
       term.textContent = label;
       const detail = document.createElement('dd');
       detail.textContent = status.statsHidden ? '非公開' : String(value ?? '').trim() || '－';
       row.append(term, detail);
-      if (state.currentRole === 'gm' || (state.currentRole === 'pc' && status.playerId === state.playerId)) {
+      const canAdjustStatus = state.characterSheetSystemId === 'coc'
+        || (state.characterSheetSystemId === 'emoklore' && ['hp', 'mp', 'resonance'].includes(field));
+      if (canAdjustStatus && (state.currentRole === 'gm' || (state.currentRole === 'pc' && status.playerId === state.playerId))) {
         const controls = document.createElement('span');
         controls.className = 'character-status-controls';
         [['−', -1, '減らす'], ['+', 1, '増やす']].forEach(([symbol, delta, description]) => {
@@ -741,7 +784,8 @@ function renderCharacterStatuses() {
           button.disabled = delta < 0 && Number(value || 0) <= 0;
           button.addEventListener('click', () => {
             button.disabled = true;
-            socket.emit('adjust-character-status', { playerId: status.playerId, field: label === 'HP' ? 'hp' : label === 'SAN' ? 'san' : 'luck', delta }, (result) => {
+            const statusField = field || (label === 'HP' ? 'hp' : label === 'SAN' ? 'san' : 'luck');
+            socket.emit('adjust-character-status', { playerId: status.playerId, field: statusField, delta }, (result) => {
               if (!result?.ok) renderCharacterStatuses();
             });
           });
@@ -755,7 +799,7 @@ function renderCharacterStatuses() {
     elements.characterStatusBoxes.appendChild(card);
   });
   elements.characterStatusBoxes.hidden = state.currentRole === 'entry'
-    || state.characterSheetSystemId !== 'coc'
+    || !['coc', 'emoklore'].includes(state.characterSheetSystemId)
     || state.characterStatuses.length === 0;
 }
 
@@ -816,9 +860,19 @@ function renderCharacterSheet() {
     elements.deleteNpcButton.hidden = state.currentRole !== 'gm' || sheet?.role !== 'npc';
     elements.deleteNpcButton.disabled = false;
   }
-  if (elements.characterSheetImport) elements.characterSheetImport.hidden = state.characterSheetSystemId !== 'coc';
+  if (elements.characterSheetImport) elements.characterSheetImport.hidden = !['coc', 'emoklore'].includes(state.characterSheetSystemId);
+  if (elements.characterSheetImport?.querySelector('summary')) {
+    elements.characterSheetImport.querySelector('summary').textContent = state.characterSheetSystemId === 'emoklore'
+      ? 'ココフォリアのエモクロアキャラクターデータから入力'
+      : 'ココフォリアのキャラクターデータから入力';
+  }
+  if (elements.characterSheetImportData) {
+    elements.characterSheetImportData.placeholder = state.characterSheetSystemId === 'emoklore'
+      ? 'エモクロア形式のココフォリアJSONを貼り付け'
+      : 'ココフォリア形式のJSONを貼り付け';
+  }
   if (elements.characterSheetOwner) {
-    const systemName = state.characterSheetSystemId === 'coc' ? 'クトゥルフ神話TRPG' : 'エモクロアTRPG';
+    const systemName = state.characterSheetSystemId === 'coc' ? '新クトゥルフ神話TRPG' : 'エモクロアTRPG';
     elements.characterSheetOwner.textContent = sheet
       ? `${sheet.name || sheet.playerId} ・ ${sheet.role === 'npc' ? 'NPC' : 'PC'} ・ ${systemName}`
       : 'キャラクターシートがありません';
@@ -906,12 +960,83 @@ function parseCocofoliaCharacter(jsonText) {
   return { values, skillCount: skills.length };
 }
 
+function parseEmokloreCocofoliaCharacter(jsonText) {
+  const character = JSON.parse(jsonText);
+  if (character?.kind !== 'character' || !character.data || typeof character.data !== 'object') {
+    throw new Error('ココフォリアのキャラクターデータではありません');
+  }
+  const { data } = character;
+  const values = {};
+  const addValue = (key, value) => {
+    if (typeof value === 'string' || typeof value === 'number') values[key] = String(value);
+  };
+  addValue('characterName', data.name);
+  addValue('initiative', data.initiative);
+  const remainingMemoLines = [];
+  String(data.memo || '').split(/\r?\n/).forEach((line) => {
+    const emotion = line.match(/^\s*共鳴感情[・.]\s*(表|裏|ルーツ)\s*[:：]\s*(.*)$/);
+    if (emotion) {
+      const emotionFields = { 表: 'resonanceEmotionSurface', 裏: 'resonanceEmotionHidden', ルーツ: 'resonanceEmotionRoot' };
+      addValue(emotionFields[emotion[1]], emotion[2]);
+    } else if (line.trim()) {
+      remainingMemoLines.push(line);
+    }
+  });
+  if (remainingMemoLines.length) addValue('memo', remainingMemoLines.join('\n'));
+
+  const parameterFields = {
+    身体: 'body', 器用: 'dexterity', 精神: 'mind', 五感: 'senses',
+    知力: 'intelligence', 魅力: 'charm', 社会: 'society', 運勢: 'fortune'
+  };
+  (Array.isArray(data.params) ? data.params : []).forEach((parameter) => {
+    const label = String(parameter?.label || '').normalize('NFKC').trim();
+    const key = parameterFields[label];
+    if (key) addValue(key, parameter.value);
+  });
+
+  const statusFields = { HP: 'hp', MP: 'mp', 共鳴: 'resonance' };
+  (Array.isArray(data.status) ? data.status : []).forEach((status) => {
+    const label = String(status?.label || '').normalize('NFKC').trim();
+    const key = statusFields[label];
+    if (key) addValue(key, status.value ?? status.max);
+  });
+
+  const skills = typeof data.commands === 'string'
+    ? data.commands.split(/\r?\n/).flatMap((line) => {
+      const match = line.match(/^\s*(\d{1,2})\s*DM\s*<=\s*(\d{1,2})\s*(?:〈([^〉]+)〉|<([^>]+)>)/i);
+      if (!match) return [];
+      const level = Number(match[1]);
+      const target = Number(match[2]);
+      const name = (match[3] || match[4] || '').trim();
+      return name && level >= 1 && level <= 10 && target <= 10 ? [`${name} ${level} ${target}`] : [];
+    })
+    : [];
+  if (typeof data.commands === 'string') values.skills = skills.join('\n');
+  if (!values.resonance) values.resonance = '1';
+  return { values, skillCount: skills.length };
+}
+
+function parseEmokloreSkill(line) {
+  const match = String(line || '').normalize('NFKC').trim().match(/^(.+?)\s+(\d{1,2})\s+(\d{1,2})$/);
+  if (!match) return null;
+  const name = match[1].trim();
+  const level = Number(match[2]);
+  const target = Number(match[3]);
+  return name && level >= 1 && level <= 10 && target >= 0 && target <= 10
+    ? { name, level, target }
+    : null;
+}
+
 function parseCharacterSkill(line) {
   const match = String(line || '').normalize('NFKC').trim().match(/^(.+?)\s*[:：]?\s*(\d{1,3})$/);
   if (!match) return null;
   const name = match[1].trim();
   const target = Number(match[2]);
   return name && target >= 0 && target <= 100 ? { name, target } : null;
+}
+
+function parseSkillRollLine(line) {
+  return state.characterSheetSystemId === 'emoklore' ? parseEmokloreSkill(line) : parseCharacterSkill(line);
 }
 
 const cocBasicRollFields = [
@@ -936,7 +1061,7 @@ function getCharacterRollSkills(sheet) {
     })
     : [];
   const customSkills = String(sheet.values?.skills || '').split(/\r?\n/)
-    .map(parseCharacterSkill).filter(Boolean);
+    .map(parseSkillRollLine).filter(Boolean);
   const seenNames = new Set();
   return [...basicSkills, ...customSkills].filter((skill) => {
     if (seenNames.has(skill.name)) return false;
@@ -948,17 +1073,20 @@ function getCharacterRollSkills(sheet) {
 function getSelectedSkillRollKeys(sheet, skills) {
   const savedValue = typeof sheet.values?.rollSkills === 'string' ? sheet.values.rollSkills : '';
   const savedLines = savedValue.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const explicitSelection = savedLines.includes('*');
-  if (explicitSelection) return new Set(savedLines.filter((line) => line !== '*'));
+  if (savedLines.includes('!')) return new Set(savedLines.filter((line) => line !== '!'));
+  if (savedLines.includes('*')) {
+    const legacySelection = savedLines.filter((line) => line !== '*');
+    return new Set(legacySelection.length ? legacySelection : skills.map(getSkillRollKey));
+  }
   if (!savedLines.length) return new Set(skills.map(getSkillRollKey));
 
   const selected = new Set(skills.filter((skill) => skill.isBasic).map(getSkillRollKey));
-  savedLines.map(parseCharacterSkill).filter(Boolean).forEach((skill) => selected.add(getSkillRollKey(skill)));
+  savedLines.map(parseSkillRollLine).filter(Boolean).forEach((skill) => selected.add(getSkillRollKey(skill)));
   return selected;
 }
 
 function serializeSkillRollKeys(selectedSkills) {
-  return ['*', ...selectedSkills].join('\n');
+  return ['!', ...selectedSkills].join('\n');
 }
 
 function renderSkillRollSettings(sheet) {
@@ -966,6 +1094,14 @@ function renderSkillRollSettings(sheet) {
   const skills = getCharacterRollSkills(sheet);
   const selectionInput = elements.characterSheetFields.querySelector('[data-sheet-field="rollSkills"]');
   if (!selectionInput) return;
+
+  if (!skills.length) {
+    selectionInput.value = '';
+    sheet.values.rollSkills = '';
+    elements.skillRollSettings.hidden = true;
+    elements.skillRollSettingList.innerHTML = '';
+    return;
+  }
 
   const selectedSkills = getSelectedSkillRollKeys(sheet, skills);
   selectionInput.value = serializeSkillRollKeys(selectedSkills);
@@ -992,17 +1128,57 @@ function renderSkillRollSettings(sheet) {
       renderSkillRollButtons();
     });
     const text = document.createElement('span');
-    text.textContent = `${skill.name} ${skill.target}`;
+    text.textContent = state.characterSheetSystemId === 'emoklore'
+      ? `${skill.name} ${skill.level}D10・判定値${skill.target}`
+      : `${skill.name} ${skill.target}`;
     label.append(checkbox, text);
     elements.skillRollSettingList.appendChild(label);
   });
 }
 
+function findTypedSkillRoll(value) {
+  const skillName = value.normalize('NFKC').trim();
+  if (!skillName) return null;
+  const sheet = state.currentRole === 'gm'
+    ? state.characterSheets.find((item) => item.role === 'npc' && item.playerId === elements.diceActor?.value)
+    : state.characterSheets.find((item) => item.playerId === state.playerId);
+  if (!sheet) return null;
+  const skills = getCharacterRollSkills(sheet);
+  const selectedSkills = getSelectedSkillRollKeys(sheet, skills);
+  const matches = skills.filter((skill) => selectedSkills.has(getSkillRollKey(skill))
+    && skill.name.normalize('NFKC').trim() === skillName);
+  return matches.length === 1 ? { sheet, skill: matches[0] } : null;
+}
+
+function rollCharacterSkill(sheet, skill) {
+  const isEmoklore = state.characterSheetSystemId === 'emoklore';
+  const bonusDice = isEmoklore ? Number(elements.emokloreBonusDiceInput?.value || 0) : 0;
+  if (isEmoklore && (!Number.isInteger(bonusDice) || bonusDice < 0 || skill.level + bonusDice > 20)) {
+    setStatus('技能レベルと追加D10を合わせて20個以内にしてください');
+    return false;
+  }
+  socket.emit('roll-dice', {
+    sides: isEmoklore ? 10 : 100,
+    count: isEmoklore ? skill.level : 1,
+    expression: isEmoklore ? `${skill.level}D10` : '1D100',
+    skillName: skill.name,
+    skillValue: skill.target,
+    skillPlayerId: sheet.playerId,
+    rollMode: elements.skillRollMode?.value || 'normal',
+    bonusDice
+  });
+  switchSessionTab('chat');
+  return true;
+}
+
 function renderSkillRollButtons() {
   if (!elements.skillRollList || !elements.skillRollSection) return;
+  const isEmoklore = state.characterSheetSystemId === 'emoklore';
+  if (elements.skillRollMode) elements.skillRollMode.hidden = isEmoklore;
+  if (elements.emokloreBonusDiceOption) elements.emokloreBonusDiceOption.hidden = !isEmoklore;
   elements.skillRollList.innerHTML = '';
   const sheets = state.currentRole === 'gm'
-    ? state.characterSheets.filter((sheet) => sheet.role === 'npc')
+    ? state.characterSheets.filter((sheet) => sheet.role === 'npc' && sheet.playerId === elements.diceActor?.value)
     : state.characterSheets.filter((sheet) => sheet.playerId === state.playerId);
   let skillCount = 0;
   sheets.forEach((sheet) => {
@@ -1014,27 +1190,32 @@ function renderSkillRollButtons() {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'skill-roll-button';
-      button.textContent = state.currentRole === 'gm'
-        ? `${sheet.name || sheet.playerId}・${skill.name} ${skill.target}`
-        : `${skill.name} ${skill.target}`;
-      button.title = `${skill.name}（目標値${skill.target}）を1D100で判定`;
+      const skillName = document.createElement('span');
+      skillName.className = 'skill-roll-name';
+      skillName.textContent = skill.name;
+      const skillDetails = document.createElement('span');
+      skillDetails.className = 'skill-roll-details';
+      skillDetails.textContent = isEmoklore
+        ? `${skill.level}D10 ・ 判定値 ${skill.target}`
+        : `1D100 ・ 目標値 ${skill.target}`;
+      button.append(skillName, skillDetails);
+      button.title = isEmoklore
+        ? `${skill.name}（${skill.level}D10・判定値${skill.target}）で判定`
+        : `${skill.name}（目標値${skill.target}）を1D100で判定`;
       button.addEventListener('click', () => {
-        socket.emit('roll-dice', {
-          sides: 100,
-          count: 1,
-          expression: '1D100',
-          skillName: skill.name,
-          skillValue: skill.target,
-          skillPlayerId: sheet.playerId,
-          rollMode: elements.skillRollMode?.value || 'normal'
-        });
-        switchSessionTab('chat');
+        rollCharacterSkill(sheet, skill);
       });
       elements.skillRollList.appendChild(button);
     });
   });
   elements.skillRollSection.hidden = skillCount === 0;
 }
+
+elements.emokloreBonusDiceInput?.addEventListener('input', () => {
+  elements.emokloreBonusDiceInput.value = elements.emokloreBonusDiceInput.value.normalize('NFKC').replace(/\D/g, '');
+});
+
+elements.diceActor?.addEventListener('change', renderSkillRollButtons);
 
 function loadCharacterSheets() {
   if (!state.sessionToken) return;
@@ -1883,6 +2064,7 @@ function enterRoom(result, role) {
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
+  if (elements.emokloreManualRoll) elements.emokloreManualRoll.hidden = state.characterSheetSystemId !== 'emoklore';
   if (elements.layerSidebarTab) elements.layerSidebarTab.hidden = role !== 'gm';
   switchLeftSidebarTab('pc');
   if (elements.characterSheetButton) elements.characterSheetButton.hidden = !['gm', 'pc'].includes(role);
@@ -1953,7 +2135,7 @@ if (elements.joinForm) {
     const eventName = state.isInviteMode ? 'join-room' : 'create-room';
     const payload = state.isInviteMode
       ? { roomId: elements.roomIdInput?.value.trim(), inviteToken: state.inviteToken, playerId: elements.playerIdInput?.value.trim(), name: elements.nameInput?.value.trim() }
-      : { systemId: elements.systemIdInput?.value, roomTitle: elements.roomTitleInput?.value.trim(), name: elements.nameInput?.value.trim() };
+      : { systemId: elements.systemIdInput?.value, roomTitle: elements.roomTitleInput?.value.trim(), synopsis: elements.roomSynopsisInput?.value.trim(), name: elements.nameInput?.value.trim() };
 
     socket.emit(eventName, payload, (result) => {
       if (!result?.ok) {
@@ -2068,13 +2250,43 @@ if (elements.messageForm) {
         secret: Boolean(elements.secretDiceInput?.checked)
       });
     } else {
-      socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
+      const skillRoll = !elements.messageTarget?.value ? findTypedSkillRoll(text) : null;
+      if (skillRoll) rollCharacterSkill(skillRoll.sheet, skillRoll.skill);
+      else socket.emit('send-message', { text, targetId: elements.messageTarget?.value || '' });
     }
     elements.messageInput.value = '';
     if (elements.messageTarget) elements.messageTarget.value = '';
     socket.emit('typing', false);
   });
 }
+
+elements.emokloreManualRollForm?.querySelectorAll('[data-digits-only]').forEach((input) => {
+  input.addEventListener('input', () => {
+    input.value = input.value.normalize('NFKC').replace(/\D/g, '');
+  });
+});
+
+elements.emokloreManualRollForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const dice = parseEmokloreSuccessNotation(
+    elements.emokloreDiceCount?.value,
+    elements.emokloreSuccessValue?.value
+  );
+  if (!dice) {
+    if (elements.emokloreManualRollStatus) elements.emokloreManualRollStatus.textContent = '個数は1～20、強度は1～10で入力してください。';
+    return;
+  }
+  if (elements.emokloreManualRollStatus) elements.emokloreManualRollStatus.textContent = '';
+  socket.emit('roll-dice', {
+    sides: dice.sides,
+    count: dice.count,
+    expression: dice.expression,
+    successValue: dice.successValue,
+    actorId: elements.diceActor?.value || '',
+    secret: Boolean(elements.secretDiceInput?.checked)
+  });
+  switchSessionTab('chat');
+});
 
 if (elements.messageInput) {
   elements.messageInput.addEventListener('keydown', (event) => {
@@ -2444,7 +2656,6 @@ elements.deleteScenarioPage?.addEventListener('click', () => {
   state.activeScenarioPageId = state.scenarioPages[Math.max(0, activeIndex - 1)].id;
   renderScenarioEditor();
 });
-elements.scenarioClose?.addEventListener('click', closeScenarioDialog);
 elements.scenarioDialog?.addEventListener('close', () => elements.playArea?.classList.remove('has-open-scenario'));
 elements.scenarioDialog?.addEventListener('cancel', (event) => {
   if (hasUnsavedScenarioChanges() && !window.confirm('シナリオに未保存の変更があります。保存せずに閉じてもよろしいですか？')) {
@@ -2453,6 +2664,11 @@ elements.scenarioDialog?.addEventListener('cancel', (event) => {
 });
 elements.scenarioDialog?.addEventListener('click', (event) => {
   if (event.target === elements.scenarioDialog) closeScenarioDialog();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!elements.scenarioDialog?.open || elements.scenarioDialog.contains(event.target)) return;
+  if (event.target.closest('#leftSidebar, #sessionSidebar')) return;
+  closeScenarioDialog();
 });
 elements.scenarioForm?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -2484,7 +2700,9 @@ elements.characterSheetDialog?.addEventListener('click', (event) => {
 });
 elements.characterSheetImportButton?.addEventListener('click', () => {
   try {
-    const imported = parseCocofoliaCharacter(elements.characterSheetImportData?.value || '');
+    const imported = state.characterSheetSystemId === 'emoklore'
+      ? parseEmokloreCocofoliaCharacter(elements.characterSheetImportData?.value || '')
+      : parseCocofoliaCharacter(elements.characterSheetImportData?.value || '');
     const fields = new Map([...elements.characterSheetFields.querySelectorAll('[data-sheet-field]')]
       .map((input) => [input.dataset.sheetField, input]));
     let importedCount = 0;
@@ -2690,6 +2908,7 @@ socket.on('board-layout-saves-updated', (saves) => {
 if (params.get('room')) {
   if (elements.roomIdInput) elements.roomIdInput.value = params.get('room');
   if (state.isInviteMode) {
+    if (elements.entryHeadline) elements.entryHeadline.hidden = true;
     if (elements.roomListButton) elements.roomListButton.hidden = true;
     if (elements.roomLibrary) elements.roomLibrary.hidden = true;
     if (elements.systemLabel) elements.systemLabel.hidden = true;
@@ -2704,6 +2923,8 @@ if (params.get('room')) {
     if (elements.roomTitleInput) elements.roomTitleInput.removeAttribute('required');
     const roomTitleLabel = elements.roomTitleInput?.closest('label');
     if (roomTitleLabel) roomTitleLabel.hidden = true;
+    const roomSynopsisLabel = elements.roomSynopsisInput?.closest('label');
+    if (roomSynopsisLabel) roomSynopsisLabel.hidden = true;
     
     const nameLabelSpan = elements.nameLabel?.querySelector('span');
     if (nameLabelSpan) nameLabelSpan.textContent = '表示名';
@@ -2712,6 +2933,13 @@ if (params.get('room')) {
     if (elements.systemIdInput) elements.systemIdInput.disabled = true;
     if (elements.joinButton) elements.joinButton.textContent = 'ルームに入る →';
     if (elements.entryHint) elements.entryHint.textContent = 'GMから共有された招待URLです。表示名を入力して入室してください。';
+    socket.emit('get-invite-room-info', { roomId: params.get('room'), inviteToken: state.inviteToken }, (result) => {
+      if (!result?.ok) return;
+      renderKanjiAccentedText(elements.inviteSystemName, result.systemName);
+      renderKanjiAccentedText(elements.inviteRoomTitle, result.roomTitle);
+      if (elements.entryIntro) elements.entryIntro.textContent = result.synopsis || defaultRoomSynopsis;
+      if (elements.inviteRoomDetails) elements.inviteRoomDetails.hidden = false;
+    });
   }
 }
 

@@ -31,7 +31,7 @@ const r2 = r2Configured ? new S3Client({
 }) : null;
 
 const trpgSystems = Object.freeze({
-  coc: Object.freeze({ id: 'coc', name: 'クトゥルフ神話TRPG' }),
+  coc: Object.freeze({ id: 'coc', name: '新クトゥルフ神話TRPG' }),
   emoklore: Object.freeze({ id: 'emoklore', name: 'エモクロアTRPG' })
 });
 const characterSheetFields = Object.freeze({
@@ -46,11 +46,12 @@ const characterSheetFields = Object.freeze({
     ['rollSkills', 'ダイスロール表示設定', 'textarea'], ['memo', 'メモ', 'textarea']
   ]),
   emoklore: Object.freeze([
-    ['characterName', 'キャラクター名', 'text'], ['age', '年齢', 'number'], ['occupation', '職業', 'text'],
+    ['characterName', 'キャラクター名', 'text'], ['age', '年齢', 'number'], ['occupation', '職業', 'text'], ['initiative', 'イニシアチブ', 'number'],
     ['body', '身体', 'number'], ['dexterity', '器用', 'number'], ['mind', '精神', 'number'], ['senses', '五感', 'number'],
     ['intelligence', '知力', 'number'], ['charm', '魅力', 'number'], ['society', '社会', 'number'], ['fortune', '運勢', 'number'],
-    ['resonance', '共鳴', 'number'], ['resonanceEmotion', '共鳴感情', 'text'],
-    ['skills', '技能（技能名・判定値）', 'textarea', '技能名と判定値を1行ずつ入力'],
+    ['hp', 'HP（現在値）', 'number'], ['mp', 'MP（現在値）', 'number'], ['resonance', '∞共鳴レベル', 'number'],
+    ['resonanceEmotionSurface', '共鳴感情・表', 'text'], ['resonanceEmotionHidden', '共鳴感情・裏', 'text'], ['resonanceEmotionRoot', '共鳴感情・ルーツ', 'text'],
+    ['skills', '技能（技能名・レベル・判定値）', 'textarea', '例: 聞き耳 1 4\n∞共鳴 1 5'],
     ['rollSkills', 'ダイスロール表示設定', 'textarea'], ['memo', 'メモ', 'textarea']
   ])
 });
@@ -136,7 +137,9 @@ function clearDifferenceRegistration(assets) {
 }
 
 function createEmptyCharacterSheet(systemId) {
-  return Object.fromEntries(characterSheetFields[systemId].map(([key]) => [key, '']));
+  const values = Object.fromEntries(characterSheetFields[systemId].map(([key]) => [key, '']));
+  if (systemId === 'emoklore') values.resonance = '1';
+  return values;
 }
 
 function normalizeCharacterSheet(systemId, values) {
@@ -149,6 +152,12 @@ function normalizeCharacterSheet(systemId, values) {
       result[key] = type === 'textarea' ? value.slice(0, 5000) : cleanText(value, 160);
     }
   });
+  if (systemId === 'emoklore') {
+    if (!result.resonance) result.resonance = '1';
+    if (!result.resonanceEmotionSurface && typeof values?.resonanceEmotion === 'string') {
+      result.resonanceEmotionSurface = cleanText(values.resonanceEmotion, 160);
+    }
+  }
   return result;
 }
 
@@ -160,6 +169,17 @@ function parseCharacterSkillLine(line) {
   return name && target >= 0 && target <= 100 ? { name, target } : null;
 }
 
+function parseEmokloreSkillLine(line) {
+  const match = typeof line === 'string' && line.normalize('NFKC').trim().match(/^(.+?)\s+(\d{1,2})\s+(\d{1,2})$/);
+  if (!match) return null;
+  const name = cleanText(match[1], 60);
+  const level = Number(match[2]);
+  const target = Number(match[3]);
+  return name && level >= 1 && level <= 10 && target >= 0 && target <= 10
+    ? { name, level, target }
+    : null;
+}
+
 function getSkillRollOutcome(roll, target) {
   if (roll === 1) return 'クリティカル';
   if (target >= 50 ? roll === 100 : roll >= 96) return 'ファンブル';
@@ -167,6 +187,20 @@ function getSkillRollOutcome(roll, target) {
   if (roll <= Math.floor(target / 2)) return 'ハード成功';
   if (roll <= target) return 'レギュラー成功';
   return '失敗';
+}
+
+function getEmokloreSkillOutcome(results, target) {
+  const successes = results.reduce((total, result) => total
+    + (result <= target ? 1 : 0)
+    + (result === 1 ? 1 : 0)
+    - (result === 10 ? 1 : 0), 0);
+  const outcome = successes < 0 ? 'ファンブル'
+    : successes === 0 ? '失敗'
+      : successes === 1 ? 'シングル'
+        : successes === 2 ? 'ダブル'
+          : successes === 3 ? 'トリプル'
+            : successes < 10 ? 'ミラクル' : 'カタストロフ';
+  return { successes, outcome };
 }
 
 function createRoomId() {
@@ -177,10 +211,10 @@ function createRoomId() {
   return id;
 }
 
-function getRoom(id, systemId = 'coc', title = '') {
+function getRoom(id, systemId = 'coc', title = '', synopsis = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', npcSpeaking: false, npcMicTargetAssetId: '', speakingPlayers: new Map(), scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', npcSpeaking: false, npcMicTargetAssetId: '', speakingPlayers: new Map(), scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, synopsis: cleanText(synopsis, 1000), createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -201,6 +235,7 @@ function persistRooms() {
     gmToken: room.gmToken,
     systemId: room.systemId,
     title: room.title,
+    synopsis: room.synopsis || '',
     createdAt: room.createdAt,
     updatedAt: room.updatedAt
   }));
@@ -240,6 +275,7 @@ function loadPersistedRooms() {
         gmToken,
         systemId: savedRoom.systemId,
         title: cleanText(savedRoom.title, 80),
+        synopsis: cleanText(savedRoom.synopsis, 1000),
         createdAt: savedRoom.createdAt,
         updatedAt: savedRoom.updatedAt
       });
@@ -374,6 +410,26 @@ function getCharacterStatus(room, playerId) {
   const npc = room.npcs.get(playerId);
   if (npc) {
     const values = getNpcCharacterSheet(npc, room.systemId);
+    if (room.systemId === 'emoklore') {
+      const body = values.body.trim() ? Number(values.body) : null;
+      const mind = values.mind.trim() ? Number(values.mind) : null;
+      const intelligence = values.intelligence.trim() ? Number(values.intelligence) : null;
+      const derivedHp = Number.isFinite(body) ? String(body + 10) : '';
+      const derivedMp = Number.isFinite(mind) && Number.isFinite(intelligence) ? String(mind + intelligence) : '';
+      return {
+        playerId,
+        role: 'npc',
+        name: npc.name,
+        characterName: values.characterName,
+        stats: [
+          ['HP', values.hp || derivedHp, 'hp'], ['MP', values.mp || derivedMp, 'mp'],
+          ['共鳴', values.resonance, 'resonance'],
+          ['表', values.resonanceEmotionSurface || values.resonanceEmotion],
+          ['裏', values.resonanceEmotionHidden], ['ルーツ', values.resonanceEmotionRoot]
+        ],
+        statsVisibleToPlayers: npc.statsVisibleToPlayers !== false
+      };
+    }
     return {
       playerId,
       role: 'npc',
@@ -386,6 +442,25 @@ function getCharacterStatus(room, playerId) {
     };
   }
   const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
+  if (room.systemId === 'emoklore') {
+    const body = values.body.trim() ? Number(values.body) : null;
+    const mind = values.mind.trim() ? Number(values.mind) : null;
+    const intelligence = values.intelligence.trim() ? Number(values.intelligence) : null;
+    const derivedHp = Number.isFinite(body) ? String(body + 10) : '';
+    const derivedMp = Number.isFinite(mind) && Number.isFinite(intelligence) ? String(mind + intelligence) : '';
+    return {
+      playerId,
+      role: 'pc',
+      name: room.players.get(playerId)?.name || playerId,
+      characterName: values.characterName || '',
+      stats: [
+        ['HP', values.hp || derivedHp, 'hp'], ['MP', values.mp || derivedMp, 'mp'],
+        ['共鳴', values.resonance, 'resonance'],
+        ['表', values.resonanceEmotionSurface || values.resonanceEmotion],
+        ['裏', values.resonanceEmotionHidden], ['ルーツ', values.resonanceEmotionRoot]
+      ]
+    };
+  }
   return {
     playerId,
     role: 'pc',
@@ -397,15 +472,25 @@ function getCharacterStatus(room, playerId) {
   };
 }
 function adjustCharacterStatus(room, playerId, field, delta) {
-  const limits = { hp: 100000, san: 99, luck: 99 };
+  const limits = room.systemId === 'emoklore'
+    ? { hp: 100000, mp: 100000, resonance: 10 }
+    : { hp: 100000, san: 99, luck: 99 };
   if (!Object.prototype.hasOwnProperty.call(limits, field) || !Number.isInteger(delta) || Math.abs(delta) !== 1) return null;
   const npc = room.npcs.get(playerId);
   if (!npc && !room.players.has(playerId)) return null;
   const values = npc
     ? getNpcCharacterSheet(npc, room.systemId)
     : room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
-  const current = Number(values[field]) || 0;
-  values[field] = String(Math.max(0, Math.min(limits[field], current + delta)));
+  const derivedValue = room.systemId === 'emoklore'
+    ? field === 'hp'
+      ? (Number(values.body) || 0) + (values.body ? 10 : 0)
+      : field === 'mp'
+        ? (Number(values.mind) || 0) + (Number(values.intelligence) || 0)
+        : 0
+    : 0;
+  const current = Number(values[field] || derivedValue) || 0;
+  const maximum = room.systemId === 'emoklore' && field !== 'resonance' ? derivedValue : limits[field];
+  values[field] = String(Math.max(0, Math.min(maximum, current + delta)));
   if (npc) npc.values = values;
   else room.characterSheets.set(playerId, values);
   touchRoom(room);
@@ -417,7 +502,7 @@ function normalizeNpcStatusValue(value, maximum) {
   return Number.isInteger(number) && number >= 0 && number <= maximum ? String(number) : null;
 }
 function getOnlineCharacterStatuses(room, viewerRole) {
-  if (room.systemId !== 'coc') return [];
+  if (!characterSheetFields[room.systemId]) return [];
   const playerIds = new Set([...room.members.values()]
     .filter((member) => member.role === 'pc' && member.playerId)
     .map((member) => member.playerId));
@@ -426,11 +511,11 @@ function getOnlineCharacterStatuses(room, viewerRole) {
     ...[...room.npcs.keys()].map((npcId) => getCharacterStatus(room, npcId))
   ];
   return statuses.map((status) => status.role === 'npc' && viewerRole !== 'gm' && !status.statsVisibleToPlayers
-    ? { ...status, hp: '', san: '', luck: '', statsHidden: true }
+    ? { ...status, hp: '', san: '', luck: '', stats: status.stats?.map(([name, , field]) => [name, '', field]), statsHidden: true }
     : status);
 }
 function broadcastCharacterStatus(roomId, room, characterId) {
-  if (room.systemId !== 'coc') return;
+  if (!characterSheetFields[room.systemId]) return;
   room.members.forEach((member, socketId) => {
     io.to(socketId).emit('character-status-updated', getOnlineCharacterStatuses(room, member.role)
       .find((status) => status.playerId === characterId));
@@ -798,7 +883,7 @@ io.on('connection', (socket) => {
     const member = socket.data.member;
     const isNpc = room?.npcs.has(playerId);
     const isPlayer = room?.players.has(playerId);
-    if (!room || !member || room.systemId !== 'coc' || (!isNpc && !isPlayer)) {
+    if (!room || !member || !['coc', 'emoklore'].includes(room.systemId) || (!isNpc && !isPlayer)) {
       acknowledge?.({ ok: false, error: 'キャラクターまたはステータスを確認できません。' });
       return;
     }
@@ -838,13 +923,13 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true });
   });
 
-  socket.on('create-room', ({ systemId, roomTitle, name } = {}, acknowledge) => {
+  socket.on('create-room', ({ systemId, roomTitle, synopsis, name } = {}, acknowledge) => {
     const system = trpgSystems[systemId];
     const title = cleanText(roomTitle, 80);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
     if (!system || !title || !member.name) { acknowledge?.({ ok: false, error: 'システム、ルームタイトル、GM名を入力してください。' }); return; }
     const id = createRoomId();
-    const room = getRoom(id, system.id, title);
+    const room = getRoom(id, system.id, title, synopsis);
     room.inviteToken = crypto.randomBytes(32).toString('hex');
     room.gmToken = crypto.randomBytes(32).toString('hex');
     persistRooms();
@@ -1289,7 +1374,7 @@ io.on('connection', (socket) => {
     const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || sourceRoom.inviteToken === inviteToken);
     if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     const duplicateId = createRoomId();
-    const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80));
+    const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80), sourceRoom.synopsis);
     duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
     duplicateRoom.gmToken = crypto.randomBytes(32).toString('hex');
     persistRooms();
@@ -1317,6 +1402,17 @@ io.on('connection', (socket) => {
     if (!id || !playerId || !member.name || typeof inviteToken !== 'string') { acknowledge?.({ ok: false, error: '有効な招待URL、プレイヤーID、表示名が必要です。' }); return; }
     if (!room) { acknowledge?.({ ok: false, error: 'ルームが存在しないか、GMがまだ作成していません。' }); return; }
     joinRoom(socket, id, member, acknowledge, inviteToken);
+  });
+
+  socket.on('get-invite-room-info', ({ roomId, inviteToken } = {}, acknowledge) => {
+    const id = normalizeRoomId(roomId);
+    const room = id && rooms.get(id);
+    if (!room || typeof inviteToken !== 'string' || inviteToken !== room.inviteToken) {
+      acknowledge?.({ ok: false });
+      return;
+    }
+    const system = trpgSystems[room.systemId];
+    acknowledge?.({ ok: true, roomTitle: room.title, systemName: system?.name || '', synopsis: room.synopsis || '' });
   });
 
   socket.on('send-message', (payload = {}) => {
@@ -1355,14 +1451,20 @@ io.on('connection', (socket) => {
     for (const recipientId of recipientIds) io.to(recipientId).emit('message', message);
   });
 
-  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false, skillName = '', skillValue, skillPlayerId = '', rollMode = 'normal' } = {}) => {
+  socket.on('roll-dice', ({ sides, count = 1, modifier = 0, expression = '', actorId = '', secret = false, skillName = '', skillValue, skillPlayerId = '', rollMode = 'normal', successValue, bonusDice = 0 } = {}) => {
     const id = socket.data.roomId;
     const member = socket.data.member;
     const room = id && rooms.get(id);
     const diceSides = Number(sides);
     const diceCount = Number(count);
     const diceModifier = Number(modifier);
+    const additionalDice = Number(bonusDice);
     if (!room || !member || !Number.isInteger(diceSides) || diceSides < 2 || diceSides > 1000 || !Number.isInteger(diceCount) || diceCount < 1 || diceCount > 20 || !Number.isInteger(diceModifier) || Math.abs(diceModifier) > 100000) return;
+    if (!Number.isInteger(additionalDice) || additionalDice < 0 || additionalDice > 19
+      || (additionalDice > 0 && (room.systemId !== 'emoklore' || !skillName || !skillPlayerId))) return;
+    const hasSuccessValue = successValue !== undefined;
+    const customSuccessValue = Number(successValue);
+    if (hasSuccessValue && (room.systemId !== 'emoklore' || !Number.isInteger(customSuccessValue) || customSuccessValue < 1 || customSuccessValue > diceSides || skillName || skillPlayerId)) return;
     let actor = member.role === 'gm' && actorId ? room.npcs.get(actorId) : member;
     let skillRoll = null;
     if (skillName || skillPlayerId) {
@@ -1372,9 +1474,12 @@ io.on('connection', (socket) => {
       const savedSheet = npc ? getNpcCharacterSheet(npc, room.systemId) : room.characterSheets.get(skillPlayerId) || {};
       const normalizedSkillName = cleanText(skillName, 60);
       const savedSkills = savedSheet.skills || '';
-      const savedSkill = savedSkills.split(/\r?\n/).map(parseCharacterSkillLine)
+      const isEmoklore = room.systemId === 'emoklore';
+      const savedSkill = savedSkills.split(/\r?\n/).map((line) => isEmoklore
+        ? parseEmokloreSkillLine(line)
+        : parseCharacterSkillLine(line))
         .find((skill) => skill?.name === normalizedSkillName && skill.target === target)
-        || (room.systemId === 'coc'
+        || (!isEmoklore
           ? [
             ['SAN', savedSheet.san], ['幸運', savedSheet.luck],
             ['アイデア', savedSheet.idea], ['知識', savedSheet.knowledge]
@@ -1385,16 +1490,26 @@ io.on('connection', (socket) => {
       const canRollSkill = npc
         ? member.role === 'gm'
         : member.role === 'gm' || (member.role === 'pc' && member.playerId === skillPlayerId);
-      if (!canRollSkill || (!player && !npc) || !savedSkill || diceSides !== 100 || diceCount !== 1) return;
+      const validSkillDice = isEmoklore
+        ? diceSides === 10 && diceCount === savedSkill?.level && additionalDice <= 20 - (savedSkill?.level || 20)
+        : diceSides === 100 && diceCount === 1;
+      if (!canRollSkill || (!player && !npc) || !savedSkill || !validSkillDice) return;
       actor = npc || player;
       skillRoll = savedSkill;
     }
     if (!actor) return;
-    const activeRollMode = skillRoll && ['bonus', 'penalty'].includes(rollMode) ? rollMode : 'normal';
+    const isEmokloreSkill = Boolean(skillRoll) && room.systemId === 'emoklore';
+    const activeRollMode = skillRoll && (isEmokloreSkill
+      ? false
+      : ['bonus', 'penalty'].includes(rollMode)) ? rollMode : 'normal';
     let skillRollCandidates = [];
     let results;
     let total;
-    if (skillRoll && activeRollMode !== 'normal') {
+    if (isEmokloreSkill) {
+      const diceCountForRoll = skillRoll.level + additionalDice;
+      results = Array.from({ length: diceCountForRoll }, () => crypto.randomInt(1, 11));
+      total = results.reduce((sum, result) => sum + result, 0);
+    } else if (skillRoll && activeRollMode !== 'normal') {
       const onesDigit = crypto.randomInt(0, 10);
       const tensDigits = [crypto.randomInt(0, 10), crypto.randomInt(0, 10)];
       skillRollCandidates = tensDigits.map((tensDigit) => tensDigit * 10 + onesDigit || 100);
@@ -1408,19 +1523,34 @@ io.on('connection', (socket) => {
       total = results.reduce((sum, result) => sum + result, 0) + diceModifier;
     }
     const isSecret = Boolean(secret) && member.role === 'gm';
-    const skillOutcome = skillRoll ? getSkillRollOutcome(results[0], skillRoll.target) : '';
+    const emokloreResult = isEmokloreSkill ? getEmokloreSkillOutcome(results, skillRoll.target) : null;
+    const customSuccessResult = hasSuccessValue
+      ? diceSides === 10
+        ? getEmokloreSkillOutcome(results, customSuccessValue)
+        : { successes: results.filter((result) => result <= customSuccessValue).length, outcome: '' }
+      : null;
+    const skillOutcome = skillRoll
+      ? isEmokloreSkill ? emokloreResult.outcome : getSkillRollOutcome(results[0], skillRoll.target)
+      : '';
     const rollModeLabel = activeRollMode === 'bonus' ? 'ボーナス' : 'ペナルティ';
-    const skillRollText = activeRollMode === 'normal'
-      ? results.join(', ')
-      : `${skillRollCandidates.join(', ')} → ${total}（${rollModeLabel}）`;
+    const skillRollText = isEmokloreSkill
+      ? `${results.length}D10 [${results.join(', ')}] → 成功数 ${emokloreResult.successes}${additionalDice ? `（BD+${additionalDice}）` : ''}`
+      : activeRollMode === 'normal'
+        ? results.join(', ')
+        : `${skillRollCandidates.join(', ')} → ${total}（${rollModeLabel}）`;
     const rollOutcome = ({
       'レギュラー成功': 'success',
       '失敗': 'failure',
       'クリティカル': 'critical',
       'エクストリーム成功': 'extremeSuccess',
       'ハード成功': 'hardSuccess',
-      'ファンブル': 'fumble'
-    })[skillOutcome] || '';
+      'ファンブル': 'fumble',
+      'シングル': 'success',
+      'ダブル': 'hardSuccess',
+      'トリプル': 'extremeSuccess',
+      'ミラクル': 'critical',
+      'カタストロフ': 'critical'
+    })[skillOutcome || customSuccessResult?.outcome] || '';
     const notation = typeof expression === 'string' && /^\d+[dD]\d+(?:[+-]\d+)?$/.test(expression)
       ? expression
       : `${diceCount}D${diceSides}${diceModifier > 0 ? `+${diceModifier}` : diceModifier < 0 ? diceModifier : ''}`;
@@ -1429,7 +1559,9 @@ io.on('connection', (socket) => {
       text: isSecret
         ? `シークレットダイス：${results.join(', ')}${diceModifier ? ` (${diceModifier > 0 ? '+' : ''}${diceModifier})` : ''} (合計 ${total})`
         : skillRoll
-          ? `「${skillRoll.name} ${skillRoll.target}」: ${skillRollText}・${skillOutcome}`
+          ? `「${skillRoll.name} ${isEmokloreSkill ? `${skillRoll.level}D10・判定値${skillRoll.target}` : skillRoll.target}」: ${skillRollText}・${skillOutcome}`
+          : customSuccessResult
+            ? `${notation} [${results.join(', ')}] → 成功数 ${customSuccessResult.successes}（強度 ${customSuccessValue}以下）${customSuccessResult.outcome ? `・${customSuccessResult.outcome}` : ''}`
           : `${notation}: ${results.join(', ')} (合計 ${total})`,
       name: actor.name,
       role: actor.role,

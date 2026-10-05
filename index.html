@@ -4,13 +4,16 @@
 <body>
   <main class="shell">
     <section class="entry" id="entry">
-      <p class="eyebrow">TRPG STUDIO / REALTIME ROOM</p>
-      <h1>同じ卓に、<br><em>同じ声</em>を。</h1>
-      <p class="intro">GMとPCが、ルーム内のメッセージでつながるシンプルなセッション通信室。</p>
+      <h1 id="entryHeadline">同じ卓に、<br><em>同じ声</em>を。</h1>
+      <section id="inviteRoomDetails" class="invite-room-details" aria-live="polite" hidden>
+        <h1><span id="inviteSystemName" class="invite-system-name"></span><br><span id="inviteRoomTitle"></span></h1>
+      </section>
+      <p id="entryIntro" class="intro">GMとPCが、ルーム内のメッセージでつながるシンプルなセッション通信室。</p>
       <form id="joinForm" class="join-form">
         <input id="roomId" type="hidden">
-        <label id="systemLabel">TRPGシステム<select id="systemId" required><option value="coc">クトゥルフ神話TRPG</option><option value="emoklore">エモクロアTRPG</option></select></label>
+        <label id="systemLabel">TRPGシステム<select id="systemId" required><option value="coc">新クトゥルフ神話TRPG</option><option value="emoklore">エモクロアTRPG</option></select></label>
         <label>ルームタイトル<input id="roomTitle" required maxlength="80" placeholder="例: 月影の港"></label>
+        <label>あらすじ<textarea id="roomSynopsis" rows="4" maxlength="1000" placeholder=""></textarea></label>
         <label id="playerIdLabel" hidden>プレイヤーID<input id="playerId" maxlength="40" pattern="[^\s]{1,40}" placeholder="例: sato"></label>
         <label id="nameLabel"><span>GM名</span><input id="name" required maxlength="40" placeholder="例: 佐藤"></label>
         <p id="entryHint" class="hint">GMとして新しいルームを作成します。作成後、PC用招待URLを共有してください。</p>
@@ -96,12 +99,12 @@
                 <label for="scenarioInput">本文</label>
                 <div id="scenarioInput" class="scenario-rich-editor" contenteditable="true" role="textbox" aria-label="本文" aria-multiline="true" data-placeholder="この章のシナリオを入力..."></div>
               </div>
-              <footer class="character-sheet-footer scenario-footer"><span id="scenarioStatus" role="status"></span><div id="scenarioFormatTools" class="scenario-format-tools" role="toolbar" aria-label="文字色"><button type="button" data-scenario-color="#f5f1e8" aria-label="標準色" title="標準色"><span class="scenario-color-swatch is-default"></span></button><button type="button" data-scenario-color="#e53935" aria-label="赤" title="赤"><span class="scenario-color-swatch is-red"></span></button><button type="button" data-scenario-color="#1e88e5" aria-label="青" title="青"><span class="scenario-color-swatch is-blue"></span></button></div><div class="character-sheet-footer-actions"><button id="scenarioClose" class="secondary" type="button">閉じる</button><button type="submit">保存</button></div></footer>
+              <footer class="character-sheet-footer scenario-footer"><span id="scenarioStatus" role="status"></span><div id="scenarioFormatTools" class="scenario-format-tools" role="toolbar" aria-label="文字色"><button type="button" data-scenario-color="#f5f1e8" aria-label="標準色" title="標準色"><span class="scenario-color-swatch is-default"></span></button><button type="button" data-scenario-color="#e53935" aria-label="赤" title="赤"><span class="scenario-color-swatch is-red"></span></button><button type="button" data-scenario-color="#1e88e5" aria-label="青" title="青"><span class="scenario-color-swatch is-blue"></span></button></div><div class="character-sheet-footer-actions"><button type="submit">保存</button></div></footer>
             </form>
           </dialog>
           <dialog id="boardLayoutDialog" class="character-sheet-dialog board-layout-dialog" aria-labelledby="boardLayoutTitle">
             <header class="character-sheet-header">
-              <div><p class="eyebrow">BOARD LAYOUT</p><h2 id="boardLayoutTitle">セーブ地点</h2></div>
+              <div><h2 id="boardLayoutTitle">セーブ地点</h2></div>
               <button id="boardLayoutClose" class="secondary" type="button">閉じる</button>
             </header>
             <form id="boardLayoutSaveForm" class="board-layout-save-form" hidden>
@@ -130,8 +133,19 @@
           <div id="dicePanel" class="tab-panel dice-panel" role="tabpanel" aria-labelledby="diceTab" hidden>
             <label id="secretDiceOption" class="secret-dice-option" hidden><input id="secretDiceInput" type="checkbox"> シークレットダイス</label>
             <label id="diceActorOption" class="dice-actor-option" hidden>ロールするキャラクター<select id="diceActor"><option value="">GM</option></select></label>
+            <section id="emokloreManualRoll" class="skill-rolls emoklore-manual-roll" aria-label="共鳴判定" hidden>
+              <h3>共鳴判定</h3>
+              <form id="emokloreManualRollForm">
+                <div class="emoklore-manual-roll-controls">
+                  <label>個数<input id="emokloreDiceCount" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" data-digits-only required></label>
+                  <label>強度<input id="emokloreSuccessValue" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" data-digits-only required></label>
+                  <button type="submit">振る</button>
+                </div>
+                <p id="emokloreManualRollStatus" role="status"></p>
+              </form>
+            </section>
             <section id="skillRollSection" class="skill-rolls" aria-label="技能判定" hidden>
-              <div class="skill-roll-heading"><h3>技能判定</h3><select id="skillRollMode" aria-label="技能判定モード"><option value="normal">ノーマル</option><option value="bonus">ボーナス</option><option value="penalty">ペナルティ</option></select></div>
+              <div class="skill-roll-heading"><h3>技能判定</h3><label id="emokloreBonusDiceOption" class="emoklore-bonus-dice" hidden>BD<input id="emokloreBonusDiceInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" data-digits-only placeholder="0" aria-label="追加D10の個数"></label><select id="skillRollMode" aria-label="技能判定モード"><option value="normal">ノーマル</option><option value="bonus">ボーナス</option><option value="penalty">ペナルティ</option></select></div>
               <div id="skillRollList" class="skill-roll-list"></div>
             </section>
           </div>
@@ -143,7 +157,7 @@
       </div>
       <dialog id="characterSheetDialog" class="character-sheet-dialog" aria-labelledby="characterSheetTitle">
         <header class="character-sheet-header">
-          <div><p class="eyebrow">CHARACTER SHEET</p><h2 id="characterSheetTitle">キャラクターシート</h2></div>
+          <div><h2 id="characterSheetTitle">キャラクターシート</h2></div>
           <button id="characterSheetClose" class="secondary" type="button">閉じる</button>
         </header>
         <nav id="characterSheetTabs" class="character-sheet-tabs" aria-label="PC別キャラクターシート" hidden></nav>
