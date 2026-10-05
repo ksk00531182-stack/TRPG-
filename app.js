@@ -1984,6 +1984,49 @@ async function loadAssets({ afterUpload = false } = {}) {
   return false;
 }
 
+const maxDisplayImageEdge = 1600;
+const maxDisplayImageBytes = 500 * 1024;
+
+async function prepareImageForUpload(file) {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif' || typeof createImageBitmap !== 'function') return file;
+
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return file;
+  }
+
+  try {
+    const scale = Math.min(1, maxDisplayImageEdge / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size <= maxDisplayImageBytes) return file;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+    let smallestBlob = null;
+    for (const quality of [0.82, 0.72, 0.62, 0.52]) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+      if (!blob || blob.type !== 'image/webp') return file;
+      if (blob.size < file.size && (!smallestBlob || blob.size < smallestBlob.size)) smallestBlob = blob;
+      if (blob.size <= maxDisplayImageBytes && blob.size < file.size) {
+        smallestBlob = blob;
+        break;
+      }
+    }
+
+    if (!smallestBlob) return file;
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'image';
+    return new File([smallestBlob], `${baseName}.webp`, { type: 'image/webp', lastModified: file.lastModified });
+  } finally {
+    bitmap.close?.();
+  }
+}
+
 async function uploadAssets() {
   if (!elements.assetFiles || !elements.assetFiles.files) return;
   const files = [...elements.assetFiles.files];
@@ -1998,10 +2041,12 @@ async function uploadAssets() {
   try {
     const uploadedAssets = [];
     for (const file of files) {
+      if (elements.assetStatus) elements.assetStatus.textContent = `${file.name} を最適化中...`;
+      const uploadFile = await prepareImageForUpload(file);
       const permission = await fetch('/api/assets/upload-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sessionToken}` },
-        body: JSON.stringify({ category: state.currentRole === 'pc' ? 'characters' : elements.assetCategory?.value || 'materials', name: file.name, type: file.type, size: file.size })
+        body: JSON.stringify({ category: state.currentRole === 'pc' ? 'characters' : elements.assetCategory?.value || 'materials', name: uploadFile.name, type: uploadFile.type, size: uploadFile.size })
       });
       if (!permission.ok) throw new Error(`アップロード許可を取得できません (${permission.status})`);
 
@@ -2010,8 +2055,8 @@ async function uploadAssets() {
       const timeout = window.setTimeout(() => controller.abort(), 120000);
 
       try {
-        const upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file, signal: controller.signal });
-        if (!upload.ok) throw new Error(`${file.name} のアップロードに失敗しました (${upload.status})`);
+        const upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': uploadFile.type }, body: uploadFile, signal: controller.signal });
+        if (!upload.ok) throw new Error(`${uploadFile.name} のアップロードに失敗しました (${upload.status})`);
       } finally {
         window.clearTimeout(timeout);
       }
