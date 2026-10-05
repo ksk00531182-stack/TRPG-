@@ -240,13 +240,12 @@
 .layer-row.is-grouped { margin-left: 14px; padding-left: 9px; border-left: 2px solid rgba(227, 173, 104, .55); background: rgba(255, 255, 255, .025); }
 .layer-row.is-bgm-layer { border-top-color: rgba(139, 195, 163, .2); }
 .layer-row.is-bgm-layer { display: grid; grid-template-columns: minmax(0, 1fr); }
-.layer-row.is-image-layer { display: grid; grid-template-columns: minmax(0, 1fr); }
-.image-layer-title { display: grid; grid-template-columns: auto 26px minmax(0, 1fr); align-items: center; gap: 5px; min-width: 0; }
-.image-layer-title .layer-name { width: 100%; }
-.layer-row.is-image-layer > .layer-controls { justify-self: end; }
+.layer-row.is-visual-layer { display: grid; grid-template-columns: minmax(0, 1fr); }
+.layer-row.is-visual-layer > .layer-name { grid-row: 1; }
+.visual-layer-media { display: grid; grid-template-columns: auto 26px minmax(0, 1fr); align-items: center; gap: 5px; min-width: 0; }
+.visual-layer-media > .layer-controls { justify-self: end; }
 .bgm-layer-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; }
 .bgm-layer-title .layer-name { width: 100%; }
-.bgm-layer-title .bgm-rename { min-width: 24px; width: 24px; padding: 3px; }
 .bgm-layer-controls .bgm-toggle { min-width: 32px; width: 32px; height: 28px; padding: 4px; font-size: 14px; line-height: 1; }
 .bgm-layer-volume { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
 .bgm-layer-volume input { width: 76px; padding: 0; accent-color: var(--accent); }
@@ -263,9 +262,10 @@
 .layer-thumbnail { flex: 0 0 32px; width: 32px; height: 32px; object-fit: cover; border: 1px solid var(--line); background: #171a19; }
 .layer-select { flex: 0 0 auto; width: 14px; height: 14px; padding: 0; }
 .layer-controls { display: flex; flex: 0 0 auto; gap: 3px; }
-.bgm-layer-controls { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; width: 100%; min-width: 0; gap: 4px; }
+.bgm-layer-controls { display: grid; grid-template-columns: 24px minmax(0, 1fr) max-content; align-items: center; width: 100%; min-width: 0; gap: 4px; }
 .bgm-layer-controls .bgm-layer-volume { min-width: 0; width: 100%; }
 .bgm-layer-controls .bgm-layer-volume input { flex: 1 1 auto; width: auto; min-width: 0; }
+.bgm-layer-controls .layer-delete { white-space: nowrap; }
 .layer-controls button { min-width: 23px; padding: 4px 5px; border: 1px solid var(--line); color: var(--ink); background: transparent; font-size: 10px; }
 .layer-controls button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .layer-controls button:disabled { opacity: .4; cursor: default; }
