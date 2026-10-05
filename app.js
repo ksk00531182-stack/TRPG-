@@ -58,7 +58,6 @@ const elements = {
   layerBox: $('#layerBox'),
   characterLayerBox: $('#characterLayerBox'),
   npcLayerBox: $('#npcLayerBox'),
-  npcMicButton: $('#npcMicButton'),
   bgmLayerBox: $('#bgmLayerBox'),
   layerList: $('#layerList'),
   characterLayerList: $('#characterLayerList'),
@@ -172,18 +171,27 @@ function setStatus(message) {
 function setNpcSpeakingState(speaking, broadcast = false) {
   state.npcSpeaking = Boolean(speaking);
   document.querySelectorAll('#boardAssets .board-object').forEach((object) => {
+    object.classList.toggle('is-npc-mic-target', object.dataset.assetId === state.npcMicTargetAssetId);
     object.classList.toggle('is-npc-speaking', state.npcSpeaking && object.dataset.assetId === state.npcMicTargetAssetId);
   });
-  if (elements.npcMicButton) {
-    elements.npcMicButton.setAttribute('aria-pressed', String(state.npcMicMonitoring));
-    elements.npcMicButton.classList.toggle('is-monitoring', state.npcMicMonitoring);
-  }
   if (broadcast) {
     socket.emit('set-npc-speaking', { speaking: state.npcSpeaking }, (result) => {
       if (!result?.ok) {
         setNpcSpeakingState(false);
         setStatus(result?.error || 'NPCの発話状態を共有できませんでした');
       }
+    });
+  }
+}
+
+function clearNpcMicTarget({ broadcast = true } = {}) {
+  const hadTarget = Boolean(state.npcMicTargetAssetId);
+  state.npcMicTargetAssetId = '';
+  if (state.npcMicMonitoring) stopNpcMicMonitor({ broadcast });
+  else setNpcSpeakingState(false, broadcast && state.npcSpeaking);
+  if (hadTarget && broadcast) {
+    socket.emit('set-npc-mic-target', { assetId: '' }, (result) => {
+      if (!result?.ok) setStatus(result?.error || 'NPCのマイク対象を解除できませんでした');
     });
   }
 }
@@ -250,7 +258,7 @@ async function startNpcMicMonitor() {
     };
     detectVoice();
   } catch (error) {
-    stopNpcMicMonitor();
+    clearNpcMicTarget();
     setStatus(error.message || 'マイクを使用できませんでした');
   }
 }
@@ -1186,7 +1194,7 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     const boardLayer = placedAsset.category === 'characters' ? elements.characterBoardAssets : elements.boardAssets;
     const isSelected = state.selectedBoardAssetId === placedAsset.id;
     const isMultiSelected = state.selectedLayerIds.has(placedAsset.id);
-    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId && state.npcSpeaking ? ' is-npc-speaking' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
+    object.className = `board-object${isSelected ? ' is-selected' : ''}${isMultiSelected ? ' is-multi-selected' : ''}${placedAsset.locked ? ' is-locked' : ''}${placedAsset.category === 'characters' ? ' is-character' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId ? ' is-npc-mic-target' : ''}${placedAsset.category === 'npcs' && placedAsset.id === state.npcMicTargetAssetId && state.npcSpeaking ? ' is-npc-speaking' : ''}${canEditBoardAsset ? ' is-editable' : ''}`;
     object.dataset.assetId = placedAsset.id;
     object.style.zIndex = String(index + 1);
     object.style.left = `${Math.max(0.03, Math.min(0.97, Number(placedAsset.x) || 0.5)) * 100}%`;
@@ -1579,9 +1587,19 @@ function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
       : state.npcMicTargetAssetId ? 'マイク反応をこのNPCに切り替え' : 'マイク反応をON';
     micOption.addEventListener('click', () => {
       menu.hidden = true;
-      socket.emit('set-npc-mic-target', { assetId: isMicTarget ? '' : placedAsset.id }, (result) => {
-        if (!result?.ok) setStatus(result?.error || 'NPCのマイク対象を変更できませんでした');
+      if (isMicTarget) {
+        clearNpcMicTarget();
+        return;
+      }
+      state.npcMicTargetAssetId = placedAsset.id;
+      setNpcSpeakingState(false);
+      socket.emit('set-npc-mic-target', { assetId: placedAsset.id }, (result) => {
+        if (!result?.ok) {
+          clearNpcMicTarget({ broadcast: false });
+          setStatus(result?.error || 'NPCのマイク対象を変更できませんでした');
+        }
       });
+      if (!state.npcMicMonitoring) void startNpcMicMonitor();
     });
     menu.appendChild(micOption);
   }
@@ -1763,7 +1781,6 @@ function enterRoom(result, role) {
   state.currentRole = role;
   state.npcMicTargetAssetId = result.npcMicTargetAssetId || '';
   state.npcSpeaking = Boolean(result.npcSpeaking) && Boolean(state.npcMicTargetAssetId);
-  elements.npcMicButton.hidden = role !== 'gm';
   renderBoardBlackout(result.blackoutMode);
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   state.characterSheetSystemId = result.systemId || '';
@@ -2453,12 +2470,8 @@ elements.playAreaTabs?.forEach((tab) => {
   });
 });
 
-elements.npcMicButton?.addEventListener('click', () => {
-  if (state.npcMicMonitoring) stopNpcMicMonitor();
-  else void startNpcMicMonitor();
-});
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopNpcMicMonitor();
+  if (document.hidden) clearNpcMicTarget();
 });
 
 elements.pcSidebarTab?.addEventListener('click', () => switchLeftSidebarTab('pc'));
@@ -2557,9 +2570,11 @@ socket.on('board-blackout', renderBoardBlackout);
 socket.on('npc-speaking', (speaking) => setNpcSpeakingState(speaking));
 socket.on('npc-mic-target', (assetId) => {
   const nextTargetAssetId = typeof assetId === 'string' ? assetId : '';
-  if (nextTargetAssetId !== state.npcMicTargetAssetId) setNpcSpeakingState(false);
-  state.npcMicTargetAssetId = nextTargetAssetId;
-  if (!nextTargetAssetId && state.npcMicMonitoring) stopNpcMicMonitor({ broadcast: false });
+  if (nextTargetAssetId !== state.npcMicTargetAssetId) {
+    state.npcMicTargetAssetId = nextTargetAssetId;
+    if (state.npcMicMonitoring) stopNpcMicMonitor({ broadcast: false });
+    setNpcSpeakingState(false);
+  }
 });
 socket.on('board-layout-saves-updated', (saves) => {
   if (state.currentRole === 'gm') renderBoardLayoutSaves(saves);
