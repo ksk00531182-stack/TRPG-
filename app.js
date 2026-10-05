@@ -1763,7 +1763,7 @@ function enterRoom(result, role) {
   state.currentRole = role;
   state.npcMicTargetAssetId = result.npcMicTargetAssetId || '';
   state.npcSpeaking = Boolean(result.npcSpeaking) && Boolean(state.npcMicTargetAssetId);
-  state.npcMicButton.hidden = role !== 'gm';
+  elements.npcMicButton.hidden = role !== 'gm';
   renderBoardBlackout(result.blackoutMode);
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   state.characterSheetSystemId = result.systemId || '';
