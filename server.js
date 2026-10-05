@@ -180,7 +180,7 @@ function createRoomId() {
 function getRoom(id, systemId = 'coc', title = '') {
   if (!rooms.has(id)) {
     const now = new Date().toISOString();
-    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
+    rooms.set(id, { messages: [], members: new Map(), players: new Map(), characterSheets: new Map(), npcs: new Map(), assets: new Map(), boardAssets: [], boardLayoutSaves: [], blackoutMode: 'off', scenario: normalizeScenarioPages(''), inviteToken: null, gmToken: null, systemId, title, createdAt: now, updatedAt: now });
   }
   return rooms.get(id);
 }
@@ -195,6 +195,7 @@ function persistRooms() {
     assets: [...room.assets.entries()],
     boardAssets: room.boardAssets,
     boardLayoutSaves: room.boardLayoutSaves,
+    blackoutMode: room.blackoutMode || 'off',
     scenario: normalizeScenarioPages(room.scenario),
     inviteToken: room.inviteToken,
     gmToken: room.gmToken,
@@ -230,6 +231,7 @@ function loadPersistedRooms() {
         assets: new Map(savedRoom.assets || []),
         boardAssets: Array.isArray(savedRoom.boardAssets) ? savedRoom.boardAssets.map((asset) => ({ ...asset, width: Number(asset.width) || 0.16, height: Number(asset.height) || 0.19, locked: Boolean(asset.locked), visible: asset.visible !== false, bgmVolume: Number.isFinite(Number(asset.bgmVolume)) ? Math.max(0, Math.min(1, Number(asset.bgmVolume))) : 1 })) : [],
         boardLayoutSaves: normalizeBoardLayoutSaves(storedBoardLayoutSaves),
+        blackoutMode: ['black', 'white'].includes(savedRoom.blackoutMode) ? savedRoom.blackoutMode : 'off',
         scenario: normalizeScenarioPages(savedRoom.scenario),
         inviteToken: savedRoom.inviteToken,
         gmToken,
@@ -489,10 +491,27 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
   broadcastMembers(id);
   const system = trpgSystems[room.systemId];
   const management = member.role === 'gm' ? { gmToken: room.gmToken, inviteToken: room.inviteToken } : {};
-  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
+  acknowledge?.({ ok: true, roomId: id, roomTitle: room.title, systemId: system.id, systemName: system.name, playerId: member.playerId || '', boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off', hasSavedBoardLayouts: room.boardLayoutSaves.length > 0, createdAt: room.createdAt, updatedAt: room.updatedAt, ...management, sessionToken: token, r2Configured });
 }
 
 io.on('connection', (socket) => {
+  socket.on('set-board-blackout', ({ mode } = {}, acknowledge) => {
+    const id = socket.data.roomId;
+    const room = id && rooms.get(id);
+    if (!room || socket.data.member?.role !== 'gm') {
+      acknowledge?.({ ok: false, error: '暗転操作はGMのみ行えます。' });
+      return;
+    }
+    if (!['off', 'black', 'white'].includes(mode)) {
+      acknowledge?.({ ok: false, error: '暗転モードが正しくありません。' });
+      return;
+    }
+    room.blackoutMode = mode;
+    touchRoom(room);
+    io.to(`room:${id}`).emit('board-blackout', mode);
+    acknowledge?.({ ok: true, mode });
+  });
+
   socket.on('get-board-layout-saves', (_payload, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
@@ -556,7 +575,7 @@ io.on('connection', (socket) => {
     ];
     touchRoom(room);
     io.to(`room:${id}`).emit('board-assets', room.boardAssets);
-    acknowledge?.({ ok: true, saveName: savedLayout.name, boardAssets: room.boardAssets });
+    acknowledge?.({ ok: true, saveName: savedLayout.name, boardAssets: room.boardAssets, blackoutMode: room.blackoutMode || 'off' });
   });
 
   socket.on('delete-board-layout-save', ({ saveId } = {}, acknowledge) => {

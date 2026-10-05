@@ -49,6 +49,8 @@ const elements = {
   assetCategory: $('#assetCategory'),
   assetFiles: $('#assetFiles'),
   playArea: document.querySelector('.play-area'),
+  blackoutOverlay: $('#boardBlackoutOverlay'),
+  blackoutButtons: document.querySelectorAll('[data-blackout-mode]'),
   masterBgmVolume: $('#masterBgmVolume'),
   boardAssets: $('#boardAssets'),
   characterBoardAssets: $('#characterBoardAssets'),
@@ -123,6 +125,7 @@ const state = {
   characterStatuses: [],
   assets: [],
   boardAssets: [],
+  blackoutMode: 'off',
   boardLayoutSaves: [],
   bgmPlayers: new Map(),
   masterBgmVolume: 1,
@@ -151,6 +154,19 @@ const state = {
 // ヘルパー: エラーメッセージ等のステータス表示
 function setStatus(message) {
   if (elements.status) elements.status.textContent = message;
+}
+
+function renderBoardBlackout(mode = state.blackoutMode) {
+  state.blackoutMode = ['black', 'white'].includes(mode) ? mode : 'off';
+  if (elements.playArea) {
+    elements.playArea.classList.toggle('is-blackout-black', state.blackoutMode === 'black');
+    elements.playArea.classList.toggle('is-blackout-white', state.blackoutMode === 'white');
+    elements.playArea.classList.toggle('is-blackout-gm', state.currentRole === 'gm' && state.blackoutMode !== 'off');
+  }
+  if (elements.blackoutOverlay) elements.blackoutOverlay.hidden = state.blackoutMode === 'off';
+  elements.blackoutButtons?.forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.blackoutMode === state.blackoutMode));
+  });
 }
 
 function canManageLayerAssets(assets) {
@@ -1598,6 +1614,7 @@ function enterRoom(result, role) {
   if (elements.roomLabel) elements.roomLabel.textContent = result.roomTitle || result.roomId;
   if (elements.roomSystem) elements.roomSystem.textContent = result.systemName || '';
   state.currentRole = role;
+  renderBoardBlackout(result.blackoutMode);
   setMasterBgmVolume(Storage.get(getMasterBgmVolumeKey(), 1));
   state.characterSheetSystemId = result.systemId || '';
   state.characterStatuses = [];
@@ -1609,6 +1626,7 @@ function enterRoom(result, role) {
     elements.loadBoardLayoutButton.hidden = role !== 'gm';
     elements.loadBoardLayoutButton.disabled = role !== 'gm' || !result.hasSavedBoardLayouts;
   }
+  elements.blackoutButtons?.forEach((button) => { button.hidden = role !== 'gm'; });
   if (elements.scenarioButton) elements.scenarioButton.hidden = role !== 'gm';
   if (elements.assetCategory) {
     if (role === 'pc') elements.assetCategory.value = 'characters';
@@ -2054,6 +2072,13 @@ function closeBoardLayoutDialog() {
 
 elements.saveBoardLayoutButton?.addEventListener('click', () => openBoardLayoutDialog('save'));
 elements.loadBoardLayoutButton?.addEventListener('click', () => openBoardLayoutDialog('load'));
+elements.blackoutButtons?.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (state.currentRole !== 'gm') return;
+    const mode = button.dataset.blackoutMode;
+    socket.emit('set-board-blackout', { mode: state.blackoutMode === mode ? 'off' : mode });
+  });
+});
 elements.boardLayoutClose?.addEventListener('click', closeBoardLayoutDialog);
 elements.boardLayoutSaveCancel?.addEventListener('click', closeBoardLayoutDialog);
 elements.boardLayoutDialog?.addEventListener('close', () => elements.playArea?.classList.remove('has-open-board-layout'));
@@ -2090,6 +2115,7 @@ elements.boardLayoutSaveList?.addEventListener('click', (event) => {
         return;
       }
       renderBoardAssets(result.boardAssets);
+      renderBoardBlackout(result.blackoutMode);
       closeBoardLayoutDialog();
     });
   } else if (button.dataset.boardLayoutAction === 'delete'
@@ -2366,6 +2392,7 @@ socket.on('board-assets', (boardAssets) => {
   renderBoardAssets(assets);
   if (state.currentRole === 'pc' && assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
 });
+socket.on('board-blackout', renderBoardBlackout);
 socket.on('board-layout-saves-updated', (saves) => {
   if (state.currentRole === 'gm') renderBoardLayoutSaves(saves);
 });

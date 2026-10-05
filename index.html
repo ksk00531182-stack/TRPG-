@@ -60,10 +60,13 @@
             <div id="boardAssets" class="board-assets" aria-label="配置された素材"></div>
             <div id="characterBoardAssets" class="board-assets character-board-assets" aria-label="配置されたキャラクター"></div>
           </div>
+          <div id="boardBlackoutOverlay" class="board-blackout-overlay" aria-hidden="true" hidden><span>暗転中</span></div>
           <div class="play-area-tools">
             <div class="play-area-tabs" role="tablist" aria-label="プレイエリア">
               <button id="saveBoardLayoutButton" class="play-area-tab gm-only" type="button" hidden>セーブ</button>
               <button id="loadBoardLayoutButton" class="play-area-tab gm-only" type="button" disabled hidden>ロード</button>
+              <button class="play-area-tab gm-only blackout-control" type="button" data-blackout-mode="black" aria-pressed="false" hidden>黒暗転</button>
+              <button class="play-area-tab gm-only blackout-control" type="button" data-blackout-mode="white" aria-pressed="false" hidden>白暗転</button>
               <button id="scenarioButton" class="play-area-tab gm-only" type="button" hidden>シナリオ</button>
               <button id="characterSheetButton" class="play-area-tab" type="button" hidden>キャラクターシート</button>
               <button class="play-area-tab is-active" type="button" role="tab" aria-selected="true">素材</button>
