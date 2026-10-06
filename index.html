@@ -15,7 +15,7 @@
         <label>ルームタイトル<input id="roomTitle" required maxlength="80" placeholder="例: 月影の港"></label>
         <label>あらすじ<textarea id="roomSynopsis" rows="4" maxlength="1000" placeholder=""></textarea></label>
         <label id="playerIdLabel" hidden>プレイヤーID<input id="playerId" maxlength="40" pattern="[^\s]{1,40}" placeholder="例: sato"></label>
-        <label id="nameLabel"><span>GM名</span><input id="name" required maxlength="40" placeholder="例: 佐藤"></label>
+        <label id="nameLabel"><span>GM名</span><input id="name" autocomplete="name" required maxlength="40" placeholder="例: 佐藤"></label>
         <p id="entryHint" class="hint">GMとして新しいルームを作成します。作成後、PC用招待URLを共有してください。</p>
         <button id="joinButton" type="submit">ルームを作成 <span>→</span></button>
         <button id="roomListButton" class="secondary" type="button">ルーム一覧</button>
@@ -96,8 +96,8 @@
                 <button id="deleteScenarioPage" class="character-sheet-delete" type="button">この章を削除</button>
               </div>
               <div id="scenarioPageContent" class="scenario-page-content" role="tabpanel">
-                <label for="scenarioInput">本文</label>
-                <div id="scenarioInput" class="scenario-rich-editor" contenteditable="true" role="textbox" aria-label="本文" aria-multiline="true" data-placeholder="この章のシナリオを入力..."></div>
+                <span id="scenarioInputLabel">本文</span>
+                <div id="scenarioInput" class="scenario-rich-editor" contenteditable="true" role="textbox" aria-labelledby="scenarioInputLabel" aria-multiline="true" data-placeholder="この章のシナリオを入力..."></div>
               </div>
               <footer class="character-sheet-footer scenario-footer"><span id="scenarioStatus" role="status"></span><div id="scenarioFormatTools" class="scenario-format-tools" role="toolbar" aria-label="文字色"><button type="button" data-scenario-color="#f5f1e8" aria-label="標準色" title="標準色"><span class="scenario-color-swatch is-default"></span></button><button type="button" data-scenario-color="#e53935" aria-label="赤" title="赤"><span class="scenario-color-swatch is-red"></span></button><button type="button" data-scenario-color="#1e88e5" aria-label="青" title="青"><span class="scenario-color-swatch is-blue"></span></button></div><div class="character-sheet-footer-actions"><button type="submit">保存</button></div></footer>
             </form>
