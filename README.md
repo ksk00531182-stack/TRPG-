@@ -9,7 +9,9 @@ npm install
 npm start
 ```
 
-ブラウザで `http://localhost:3000` を開き、GMがルームを作成してPCへ参加URLを共有します。ルーム情報とメッセージ履歴は `TRPG_ROOM_STORE` で指定したJSONファイルに保存されます。Renderでは永続ディスク上の `/var/data/rooms.json` を使用するため、再デプロイ後もルームを復元できます。
+ブラウザで `http://localhost:3000` を開き、GMがルームを作成してPCへ参加URLを共有します。ローカルではルーム情報とメッセージ履歴を `rooms.json` に保存します。RenderではCloudflare R2を使用し、再デプロイ後もルームを復元します。
+
+Renderで永続ディスクを使わない場合は `TRPG_ROOM_STORE=r2` を設定し、Cloudflare R2の4つの環境変数を設定してください。ルームデータは同じバケットの `trpg-studio/rooms.json` に保存されます。R2の無料枠を超える利用には料金が発生する場合があります。
 
 通常のURLではGMがルームを作成します。作成後に表示される「PC参加URLをコピー」で招待URLを発行し、そのURLをPCへ共有してください。PCは招待URLからのみ入室できます。画面上の参加形態選択はありません。
 

@@ -10,10 +10,12 @@ const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
 const rooms = new Map();
 const sessions = new Map();
-if (process.env.RENDER_SERVICE_ID && !process.env.TRPG_ROOM_STORE) {
-  throw new Error('TRPG_ROOM_STORE must point to a persistent Render disk path.');
-}
-const roomStorePath = process.env.TRPG_ROOM_STORE || path.join(root, 'rooms.json');
+const roomStoreSetting = process.env.TRPG_ROOM_STORE;
+const isRender = Boolean(process.env.RENDER_SERVICE_ID);
+const useR2RoomStore = roomStoreSetting === 'r2' || (!roomStoreSetting && isRender);
+const roomStorePath = roomStoreSetting && roomStoreSetting !== 'r2' ? roomStoreSetting : path.join(root, 'rooms.json');
+const roomStoreObjectKey = process.env.TRPG_ROOM_STORE_KEY || 'trpg-studio/rooms.json';
+let roomPersistenceQueue = Promise.resolve();
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -32,6 +34,9 @@ const r2 = r2Configured ? new S3Client({
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY }
 }) : null;
+if (useR2RoomStore && !r2) {
+  throw new Error('R2 room storage requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.');
+}
 
 const trpgSystems = Object.freeze({
   coc: Object.freeze({ id: 'coc', name: '新クトゥルフ神話TRPG' }),
@@ -242,9 +247,23 @@ function persistRooms() {
     createdAt: room.createdAt,
     updatedAt: room.updatedAt
   }));
+  const serializedRooms = JSON.stringify(savedRooms);
+  if (useR2RoomStore) {
+    const write = roomPersistenceQueue.then(() => r2.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: roomStoreObjectKey,
+      Body: serializedRooms,
+      ContentType: 'application/json; charset=utf-8'
+    })));
+    roomPersistenceQueue = write.catch((error) => {
+      console.error(`Could not persist TRPG rooms to R2 ${roomStoreObjectKey}:`, error.message);
+    });
+    return write.then(() => true, () => false);
+  }
+
   const temporaryPath = `${roomStorePath}.tmp`;
   try {
-    fs.writeFileSync(temporaryPath, JSON.stringify(savedRooms));
+    fs.writeFileSync(temporaryPath, serializedRooms);
     fs.renameSync(temporaryPath, roomStorePath);
     return true;
   } catch (error) {
@@ -254,13 +273,25 @@ function persistRooms() {
   }
 }
 
-function loadPersistedRooms() {
+async function loadPersistedRooms() {
+  const storeLabel = useR2RoomStore
+    ? `R2://${process.env.R2_BUCKET_NAME}/${roomStoreObjectKey}`
+    : roomStorePath;
   try {
-    if (!fs.existsSync(roomStorePath)) {
-      console.warn(`No persisted TRPG room file found at ${roomStorePath}`);
-      return;
+    let serializedRooms;
+    if (useR2RoomStore) {
+      const result = await r2.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: roomStoreObjectKey }));
+      serializedRooms = await result.Body?.transformToString();
+      if (typeof serializedRooms !== 'string') throw new Error('R2 room data object is empty.');
+    } else {
+      if (!fs.existsSync(roomStorePath)) {
+        console.warn(`No persisted TRPG room file found at ${roomStorePath}`);
+        return;
+      }
+      serializedRooms = fs.readFileSync(roomStorePath, 'utf8');
     }
-    const savedRooms = JSON.parse(fs.readFileSync(roomStorePath, 'utf8'));
+    const savedRooms = JSON.parse(serializedRooms);
+    if (!Array.isArray(savedRooms)) throw new Error('Persistent room data must be a JSON array.');
     let migrated = false;
     let loadedCount = 0;
     for (const savedRoom of savedRooms) {
@@ -299,11 +330,15 @@ function loadPersistedRooms() {
       });
       loadedCount += 1;
     }
-    console.info(`Restored ${loadedCount} TRPG rooms from ${roomStorePath}`);
-    if (migrated && !persistRooms()) console.error('Could not save migrated TRPG room data.');
+    console.info(`Restored ${loadedCount} TRPG rooms from ${storeLabel}`);
+    if (migrated && !(await persistRooms())) throw new Error('Could not save migrated room data.');
   } catch (error) {
-    console.error(`Could not load TRPG rooms from ${roomStorePath}:`, error.message);
-    throw new Error('Refusing to start without loading persisted TRPG rooms. Check the persistent disk before redeploying.');
+    if (useR2RoomStore && (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404)) {
+      console.warn(`No persisted TRPG room object found at ${storeLabel}; starting with an empty room store.`);
+      return;
+    }
+    console.error(`Could not load TRPG rooms from ${storeLabel}:`, error.message);
+    throw new Error('Refusing to start without loading persisted TRPG rooms. Check the configured storage before redeploying.');
   }
 }
 
@@ -410,7 +445,6 @@ const server = http.createServer((request, response) => {
 });
 
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
-loadPersistedRooms();
 
 function broadcastMembers(id) {
   const room = getRoom(id);
@@ -944,7 +978,7 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true });
   });
 
-  socket.on('create-room', ({ systemId, roomTitle, synopsis, name } = {}, acknowledge) => {
+  socket.on('create-room', async ({ systemId, roomTitle, synopsis, name } = {}, acknowledge) => {
     const system = trpgSystems[systemId];
     const title = cleanText(roomTitle, 80);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
@@ -953,9 +987,9 @@ io.on('connection', (socket) => {
     const room = getRoom(id, system.id, title, synopsis);
     room.inviteToken = crypto.randomBytes(32).toString('hex');
     room.gmToken = crypto.randomBytes(32).toString('hex');
-    if (!persistRooms()) {
+    if (!(await persistRooms())) {
       rooms.delete(id);
-      acknowledge?.({ ok: false, error: 'ルームを保存できません。Renderの永続ディスク設定を確認してください。' });
+      acknowledge?.({ ok: false, error: 'ルームを保存できません。ストレージ設定を確認してください。' });
       return;
     }
     joinRoom(socket, id, member, (result) => acknowledge?.({ ...result, inviteToken: room.inviteToken }), room.inviteToken);
@@ -1393,7 +1427,7 @@ io.on('connection', (socket) => {
     acknowledge?.({ ok: true, boardAssets: room.boardAssets });
   });
 
-  socket.on('duplicate-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
+  socket.on('duplicate-room', async ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const sourceRoom = id && rooms.get(id);
     const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || sourceRoom.inviteToken === inviteToken);
@@ -1402,9 +1436,9 @@ io.on('connection', (socket) => {
     const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80), sourceRoom.synopsis);
     duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
     duplicateRoom.gmToken = crypto.randomBytes(32).toString('hex');
-    if (!persistRooms()) {
+    if (!(await persistRooms())) {
       rooms.delete(duplicateId);
-      acknowledge?.({ ok: false, error: 'ルームを保存できません。Renderの永続ディスク設定を確認してください。' });
+      acknowledge?.({ ok: false, error: 'ルームを保存できません。ストレージ設定を確認してください。' });
       return;
     }
     const system = trpgSystems[duplicateRoom.systemId];
@@ -1632,4 +1666,9 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(port, '0.0.0.0', () => console.log(`TRPG communication room listening on port ${port}`));
+loadPersistedRooms()
+  .then(() => server.listen(port, '0.0.0.0', () => console.log(`TRPG communication room listening on port ${port}`)))
+  .catch((error) => {
+    console.error('TRPG server startup aborted:', error.message);
+    process.exitCode = 1;
+  });
