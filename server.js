@@ -10,6 +10,9 @@ const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
 const rooms = new Map();
 const sessions = new Map();
+if (process.env.RENDER_SERVICE_ID && !process.env.TRPG_ROOM_STORE) {
+  throw new Error('TRPG_ROOM_STORE must point to a persistent Render disk path.');
+}
 const roomStorePath = process.env.TRPG_ROOM_STORE || path.join(root, 'rooms.json');
 
 const contentTypes = {
@@ -261,7 +264,9 @@ function loadPersistedRooms() {
     let migrated = false;
     let loadedCount = 0;
     for (const savedRoom of savedRooms) {
-      if (!normalizeRoomId(savedRoom.id) || !trpgSystems[savedRoom.systemId] || typeof savedRoom.inviteToken !== 'string') continue;
+      if (!normalizeRoomId(savedRoom.id) || !trpgSystems[savedRoom.systemId] || typeof savedRoom.inviteToken !== 'string') {
+        throw new Error('Persistent room file contains an invalid room record.');
+      }
       const storedBoardLayoutSaves = Array.isArray(savedRoom.boardLayoutSaves)
         ? savedRoom.boardLayoutSaves
         : Array.isArray(savedRoom.savedBoardAssets)
@@ -298,6 +303,7 @@ function loadPersistedRooms() {
     if (migrated && !persistRooms()) console.error('Could not save migrated TRPG room data.');
   } catch (error) {
     console.error(`Could not load TRPG rooms from ${roomStorePath}:`, error.message);
+    throw new Error('Refusing to start without loading persisted TRPG rooms. Check the persistent disk before redeploying.');
   }
 }
 
