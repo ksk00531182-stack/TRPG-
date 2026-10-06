@@ -239,14 +239,27 @@ function persistRooms() {
     createdAt: room.createdAt,
     updatedAt: room.updatedAt
   }));
-  try { fs.writeFileSync(roomStorePath, JSON.stringify(savedRooms)); } catch (error) { console.error('Could not persist TRPG rooms:', error.message); }
+  const temporaryPath = `${roomStorePath}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(savedRooms));
+    fs.renameSync(temporaryPath, roomStorePath);
+    return true;
+  } catch (error) {
+    try { fs.unlinkSync(temporaryPath); } catch {}
+    console.error(`Could not persist TRPG rooms to ${roomStorePath}:`, error.message);
+    return false;
+  }
 }
 
 function loadPersistedRooms() {
   try {
-    if (!fs.existsSync(roomStorePath)) return;
+    if (!fs.existsSync(roomStorePath)) {
+      console.warn(`No persisted TRPG room file found at ${roomStorePath}`);
+      return;
+    }
     const savedRooms = JSON.parse(fs.readFileSync(roomStorePath, 'utf8'));
     let migrated = false;
+    let loadedCount = 0;
     for (const savedRoom of savedRooms) {
       if (!normalizeRoomId(savedRoom.id) || !trpgSystems[savedRoom.systemId] || typeof savedRoom.inviteToken !== 'string') continue;
       const storedBoardLayoutSaves = Array.isArray(savedRoom.boardLayoutSaves)
@@ -279,10 +292,12 @@ function loadPersistedRooms() {
         createdAt: savedRoom.createdAt,
         updatedAt: savedRoom.updatedAt
       });
+      loadedCount += 1;
     }
-    if (migrated) persistRooms();
+    console.info(`Restored ${loadedCount} TRPG rooms from ${roomStorePath}`);
+    if (migrated && !persistRooms()) console.error('Could not save migrated TRPG room data.');
   } catch (error) {
-    console.error('Could not load TRPG rooms:', error.message);
+    console.error(`Could not load TRPG rooms from ${roomStorePath}:`, error.message);
   }
 }
 
@@ -932,7 +947,11 @@ io.on('connection', (socket) => {
     const room = getRoom(id, system.id, title, synopsis);
     room.inviteToken = crypto.randomBytes(32).toString('hex');
     room.gmToken = crypto.randomBytes(32).toString('hex');
-    persistRooms();
+    if (!persistRooms()) {
+      rooms.delete(id);
+      acknowledge?.({ ok: false, error: 'ルームを保存できません。Renderの永続ディスク設定を確認してください。' });
+      return;
+    }
     joinRoom(socket, id, member, (result) => acknowledge?.({ ...result, inviteToken: room.inviteToken }), room.inviteToken);
   });
 
@@ -1377,7 +1396,11 @@ io.on('connection', (socket) => {
     const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80), sourceRoom.synopsis);
     duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
     duplicateRoom.gmToken = crypto.randomBytes(32).toString('hex');
-    persistRooms();
+    if (!persistRooms()) {
+      rooms.delete(duplicateId);
+      acknowledge?.({ ok: false, error: 'ルームを保存できません。Renderの永続ディスク設定を確認してください。' });
+      return;
+    }
     const system = trpgSystems[duplicateRoom.systemId];
     acknowledge?.({ ok: true, roomId: duplicateId, roomTitle: duplicateRoom.title, systemId: system.id, systemName: system.name, inviteToken: duplicateRoom.inviteToken, gmToken: duplicateRoom.gmToken, createdAt: duplicateRoom.createdAt, updatedAt: duplicateRoom.updatedAt });
   });
