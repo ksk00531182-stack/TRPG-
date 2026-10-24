@@ -554,9 +554,16 @@ function getOnlineCharacterStatuses(room, viewerRole) {
   const playerIds = new Set([...room.members.values()]
     .filter((member) => member.role === 'pc' && member.playerId)
     .map((member) => member.playerId));
+  const isNpcStatusShown = (npcId) => {
+    const isLinked = [...room.assets.values()].some((asset) => asset.category === 'npcs' && asset.assignedPlayerId === npcId)
+      || room.boardAssets.some((asset) => asset.category === 'npcs' && asset.assignedPlayerId === npcId);
+    if (!isLinked) return true;
+    return room.boardAssets.some((asset) => asset.category === 'npcs' && asset.assignedPlayerId === npcId
+      && asset.visible !== false && asset.groupVisible !== false && (!asset.differenceSetId || asset.differenceActive));
+  };
   const statuses = [
     ...[...playerIds].map((playerId) => getCharacterStatus(room, playerId)),
-    ...[...room.npcs.keys()].map((npcId) => getCharacterStatus(room, npcId))
+    ...[...room.npcs.keys()].filter(isNpcStatusShown).map((npcId) => getCharacterStatus(room, npcId))
   ];
   return statuses.map((status) => status.role === 'npc' && viewerRole !== 'gm' && !status.statsVisibleToPlayers
     ? { ...status, hp: '', san: '', luck: '', stats: status.stats?.map(([name, , field]) => [name, '', field]), statsHidden: true }
@@ -1030,7 +1037,10 @@ io.on('connection', (socket) => {
       return;
     }
     room.npcs.delete(npcId);
+    room.assets.forEach((asset) => { if (asset.category === 'npcs' && asset.assignedPlayerId === npcId) asset.assignedPlayerId = ''; });
+    room.boardAssets.forEach((asset) => { if (asset.category === 'npcs' && asset.assignedPlayerId === npcId) asset.assignedPlayerId = ''; });
     touchRoom(room);
+    io.to(`room:${id}`).emit('board-assets', room.boardAssets);
     broadcastMembers(id);
     socket.to(`room:${id}`).emit('npc-deleted', { npcId });
     acknowledge?.({ ok: true, npcId });
@@ -1058,7 +1068,7 @@ io.on('connection', (socket) => {
       key: asset.key,
       name: asset.name,
       category: asset.category,
-      assignedPlayerId: asset.category === 'characters' ? asset.assignedPlayerId || '' : '',
+      assignedPlayerId: ['characters', 'npcs'].includes(asset.category) ? asset.assignedPlayerId || '' : '',
       bgmPlaying: false,
       bgmStartedAt: 0,
       bgmOffset: 0,
@@ -1114,9 +1124,10 @@ io.on('connection', (socket) => {
     const member = socket.data.member;
     const asset = room?.assets.get(key);
     const assignedPlayerId = typeof playerId === 'string' ? playerId : '';
-    if (!room || member?.role !== 'gm' || !asset || asset.category !== 'characters'
-      || (assignedPlayerId && !room.players.has(assignedPlayerId))) {
-      acknowledge?.({ ok: false, error: 'キャラクターまたは参加者を確認できません。' });
+    const isNpcAsset = asset?.category === 'npcs';
+    if (!room || member?.role !== 'gm' || !asset || !['characters', 'npcs'].includes(asset.category)
+      || (assignedPlayerId && !(isNpcAsset ? room.npcs.has(assignedPlayerId) : room.players.has(assignedPlayerId)))) {
+      acknowledge?.({ ok: false, error: isNpcAsset ? 'NPC画像またはNPCを確認できません。' : 'キャラクターまたは参加者を確認できません。' });
       return;
     }
     asset.assignedPlayerId = assignedPlayerId;
