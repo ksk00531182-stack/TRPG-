@@ -134,6 +134,73 @@ const elements = {
   copyLink: $('#copyLink')
 };
 
+// マイク入力の音量検知（NPC用・PC用で共通）
+const micVoiceOnThreshold = 0.02;
+const micVoiceOffThreshold = 0.012;
+const micVoiceReleaseMs = 180;
+
+function createMicSession() {
+  return { stream: null, audioContext: null, analyser: null, frame: 0 };
+}
+
+function stopMicSession(session) {
+  if (session.frame) cancelAnimationFrame(session.frame);
+  session.frame = 0;
+  session.analyser = null;
+  session.stream?.getTracks().forEach((track) => track.stop());
+  session.stream = null;
+  if (session.audioContext && session.audioContext.state !== 'closed') {
+    void session.audioContext.close().catch(() => {});
+  }
+  session.audioContext = null;
+}
+
+// 検知を開始する。途中で isActive() が false になった場合は後始末をして false を返す。
+async function startMicSession(session, { isActive, isSpeaking, onSpeakingChange }) {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('このブラウザーではマイクを使用できません');
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (!isActive()) {
+    stream.getTracks().forEach((track) => track.stop());
+    return false;
+  }
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('このブラウザーでは音量を検知できません');
+  }
+  session.stream = stream;
+  const audioContext = new AudioContextConstructor();
+  session.audioContext = audioContext;
+  await audioContext.resume();
+  if (!isActive()) {
+    stopMicSession(session);
+    return false;
+  }
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 1024;
+  audioContext.createMediaStreamSource(stream).connect(analyser);
+  session.analyser = analyser;
+  const samples = new Float32Array(analyser.fftSize);
+  let quietSince = 0;
+  const detectVoice = () => {
+    if (!isActive() || !session.analyser) return;
+    analyser.getFloatTimeDomainData(samples);
+    const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+    const now = performance.now();
+    const speaking = isSpeaking();
+    if (!speaking && rms >= micVoiceOnThreshold) onSpeakingChange(true);
+    if (speaking && rms < micVoiceOffThreshold) {
+      if (!quietSince) quietSince = now;
+      if (now - quietSince >= micVoiceReleaseMs) onSpeakingChange(false);
+    } else {
+      quietSince = 0;
+    }
+    session.frame = requestAnimationFrame(detectVoice);
+  };
+  detectVoice();
+  return true;
+}
+
 const state = {
   typingTimer: null,
   sessionToken: '',
@@ -146,16 +213,10 @@ const state = {
   npcSpeaking: false,
   npcMicTargetAssetId: '',
   npcMicMonitoring: false,
-  npcMicStream: null,
-  npcMicAudioContext: null,
-  npcMicAnalyser: null,
-  npcMicFrame: 0,
+  npcMicSession: createMicSession(),
   playerSpeakingIds: new Set(),
   playerMicMonitoring: false,
-  playerMicStream: null,
-  playerMicAudioContext: null,
-  playerMicAnalyser: null,
-  playerMicFrame: 0,
+  playerMicSession: createMicSession(),
   blackoutMode: 'off',
   boardLayoutSaves: [],
   bgmPlayers: new Map(),
@@ -229,15 +290,7 @@ function clearNpcMicTarget({ broadcast = true } = {}) {
 
 function stopNpcMicMonitor({ broadcast = true } = {}) {
   state.npcMicMonitoring = false;
-  if (state.npcMicFrame) cancelAnimationFrame(state.npcMicFrame);
-  state.npcMicFrame = 0;
-  state.npcMicAnalyser = null;
-  state.npcMicStream?.getTracks().forEach((track) => track.stop());
-  state.npcMicStream = null;
-  if (state.npcMicAudioContext && state.npcMicAudioContext.state !== 'closed') {
-    void state.npcMicAudioContext.close().catch(() => {});
-  }
-  state.npcMicAudioContext = null;
+  stopMicSession(state.npcMicSession);
   if (state.npcSpeaking) setNpcSpeakingState(false, broadcast);
   else setNpcSpeakingState(false);
 }
@@ -251,43 +304,12 @@ async function startNpcMicMonitor() {
   state.npcMicMonitoring = true;
   setNpcSpeakingState(state.npcSpeaking);
   try {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('このブラウザーではマイクを使用できません');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    if (!state.npcMicMonitoring) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextConstructor) throw new Error('このブラウザーでは音量を検知できません');
-    state.npcMicStream = stream;
-    const audioContext = new AudioContextConstructor();
-    state.npcMicAudioContext = audioContext;
-    await audioContext.resume();
-    if (!state.npcMicMonitoring) {
-      stopNpcMicMonitor();
-      return;
-    }
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 1024;
-    audioContext.createMediaStreamSource(stream).connect(analyser);
-    state.npcMicAnalyser = analyser;
-    const samples = new Float32Array(analyser.fftSize);
-    let quietSince = 0;
-    const detectVoice = () => {
-      if (!state.npcMicMonitoring || !state.npcMicAnalyser) return;
-      analyser.getFloatTimeDomainData(samples);
-      const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
-      const now = performance.now();
-      if (!state.npcSpeaking && rms >= 0.02) setNpcSpeakingState(true, true);
-      if (state.npcSpeaking && rms < 0.012) {
-        if (!quietSince) quietSince = now;
-        if (now - quietSince >= 180) setNpcSpeakingState(false, true);
-      } else {
-        quietSince = 0;
-      }
-      state.npcMicFrame = requestAnimationFrame(detectVoice);
-    };
-    detectVoice();
+    const started = await startMicSession(state.npcMicSession, {
+      isActive: () => state.npcMicMonitoring,
+      isSpeaking: () => state.npcSpeaking,
+      onSpeakingChange: (speaking) => setNpcSpeakingState(speaking, true)
+    });
+    if (!started && state.npcMicMonitoring) stopNpcMicMonitor();
   } catch (error) {
     clearNpcMicTarget();
     setStatus(error.message || 'マイクを使用できませんでした');
@@ -318,15 +340,7 @@ function hasAssignedCharacterOnBoard(playerId = state.playerId) {
 
 function stopPlayerMicMonitor({ broadcast = true } = {}) {
   state.playerMicMonitoring = false;
-  if (state.playerMicFrame) cancelAnimationFrame(state.playerMicFrame);
-  state.playerMicFrame = 0;
-  state.playerMicAnalyser = null;
-  state.playerMicStream?.getTracks().forEach((track) => track.stop());
-  state.playerMicStream = null;
-  if (state.playerMicAudioContext && state.playerMicAudioContext.state !== 'closed') {
-    void state.playerMicAudioContext.close().catch(() => {});
-  }
-  state.playerMicAudioContext = null;
+  stopMicSession(state.playerMicSession);
   if (state.playerSpeakingIds.has(state.playerId)) setPlayerSpeakingState(state.playerId, false, broadcast);
 }
 
@@ -334,50 +348,12 @@ async function startPlayerMicMonitor() {
   if (state.currentRole !== 'pc' || state.playerMicMonitoring || !hasAssignedCharacterOnBoard()) return;
   state.playerMicMonitoring = true;
   try {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('このブラウザーではマイクを使用できません');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    if (!state.playerMicMonitoring) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextConstructor) throw new Error('このブラウザーでは音量を検知できません');
-    state.playerMicStream = stream;
-    const audioContext = new AudioContextConstructor();
-    state.playerMicAudioContext = audioContext;
-    await audioContext.resume();
-    if (!state.playerMicMonitoring) {
-      stopPlayerMicMonitor();
-      return;
-    }
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 1024;
-    audioContext.createMediaStreamSource(stream).connect(analyser);
-    state.playerMicAnalyser = analyser;
-    const samples = new Float32Array(analyser.fftSize);
-    let quietSince = 0;
-    let speaking = false;
-    const detectVoice = () => {
-      if (!state.playerMicMonitoring || !state.playerMicAnalyser) return;
-      analyser.getFloatTimeDomainData(samples);
-      const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
-      const now = performance.now();
-      if (!speaking && rms >= 0.02) {
-        speaking = true;
-        setPlayerSpeakingState(state.playerId, true, true);
-      }
-      if (speaking && rms < 0.012) {
-        if (!quietSince) quietSince = now;
-        if (now - quietSince >= 180) {
-          speaking = false;
-          setPlayerSpeakingState(state.playerId, false, true);
-        }
-      } else {
-        quietSince = 0;
-      }
-      state.playerMicFrame = requestAnimationFrame(detectVoice);
-    };
-    detectVoice();
+    const started = await startMicSession(state.playerMicSession, {
+      isActive: () => state.playerMicMonitoring,
+      isSpeaking: () => state.playerSpeakingIds.has(state.playerId),
+      onSpeakingChange: (speaking) => setPlayerSpeakingState(state.playerId, speaking, true)
+    });
+    if (!started && state.playerMicMonitoring) stopPlayerMicMonitor();
   } catch (error) {
     stopPlayerMicMonitor();
     setStatus(error.message || 'マイクを使用できませんでした');

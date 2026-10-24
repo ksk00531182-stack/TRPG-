@@ -67,6 +67,23 @@ const characterSheetFields = Object.freeze({
 function normalizeRoomId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null; }
 function cleanText(value, maxLength) { return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''; }
 function normalizePlayerId(value) { return typeof value === 'string' && /^[^\s]{1,40}$/.test(value.trim()) ? value.trim() : null; }
+function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+function cloneJson(value) { return JSON.parse(JSON.stringify(value)); }
+function hasManagementToken(room, gmToken, inviteToken) {
+  return Boolean(room) && ((typeof gmToken === 'string' && room.gmToken === gmToken) || (typeof inviteToken === 'string' && room.inviteToken === inviteToken));
+}
+function clearGroupFields(assets) {
+  assets.forEach((asset) => {
+    delete asset.groupId;
+    delete asset.groupName;
+    delete asset.groupVisible;
+  });
+}
+function appendMessage(room, message) {
+  room.messages.push(message);
+  if (room.messages.length > 200) room.messages.shift();
+  touchRoom(room);
+}
 function normalizeBoardLayoutSaves(saves) {
   const ids = new Set();
   return (Array.isArray(saves) ? saves : []).slice(-50).flatMap((save) => {
@@ -138,10 +155,8 @@ function clearDifferenceRegistration(assets) {
     delete asset.differenceSetId;
     delete asset.differenceActive;
     delete asset.differenceOriginalTransform;
-    delete asset.groupId;
-    delete asset.groupName;
-    delete asset.groupVisible;
   });
+  clearGroupFields(assets);
 }
 
 function createEmptyCharacterSheet(systemId) {
@@ -359,6 +374,15 @@ function readJson(request) {
   });
 }
 
+const publicFiles = new Set(['index.html', 'app.js', 'styles.css']);
+function resolvePublicFile(requestPath) {
+  let relativePath;
+  try { relativePath = requestPath === '/' ? 'index.html' : decodeURIComponent(requestPath.replace(/^\//, '')); } catch { return null; }
+  if (!publicFiles.has(relativePath) && !relativePath.startsWith('assets/')) return null;
+  const filePath = path.resolve(root, relativePath);
+  return filePath.startsWith(root + path.sep) ? filePath : null;
+}
+
 function getSession(request) {
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
   return token ? sessions.get(token) : null;
@@ -435,10 +459,8 @@ const server = http.createServer((request, response) => {
   const requestPath = new URL(request.url, `http://${request.headers.host || 'localhost'}`).pathname;
   handleAssetApi(request, response, requestPath).then((handled) => {
     if (handled) return;
-    const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\//, '');
-    const filePath = path.resolve(root, relativePath);
-    if (!filePath.startsWith(root)) { response.writeHead(404); response.end('Not Found'); return; }
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not Found'); return; }
+    const filePath = resolvePublicFile(requestPath);
+    if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not Found'); return; }
     response.writeHead(200, { 'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(filePath).pipe(response);
   }).catch((error) => { console.error('API Error:', error); sendJson(response, 500, { error: 'Asset operation failed.' }); });
@@ -461,70 +483,41 @@ function getNpcCharacterSheet(npc, systemId) {
   if (!values.characterName) values.characterName = npc.name;
   return values;
 }
+function parseOptionalNumber(value) {
+  return typeof value === 'string' && value.trim() ? Number(value) : null;
+}
+function getEmokloreDerivedStats(values) {
+  const body = parseOptionalNumber(values.body);
+  const mind = parseOptionalNumber(values.mind);
+  const intelligence = parseOptionalNumber(values.intelligence);
+  return {
+    hp: Number.isFinite(body) ? String(body + 10) : '',
+    mp: Number.isFinite(mind) && Number.isFinite(intelligence) ? String(mind + intelligence) : ''
+  };
+}
+function getEmokloreStatusStats(values) {
+  const derived = getEmokloreDerivedStats(values);
+  return [
+    ['HP', values.hp || derived.hp, 'hp'], ['MP', values.mp || derived.mp, 'mp'],
+    ['共鳴', values.resonance, 'resonance'],
+    ['表', values.resonanceEmotionSurface || values.resonanceEmotion],
+    ['裏', values.resonanceEmotionHidden], ['ルーツ', values.resonanceEmotionRoot]
+  ];
+}
 function getCharacterStatus(room, playerId) {
   const npc = room.npcs.get(playerId);
-  if (npc) {
-    const values = getNpcCharacterSheet(npc, room.systemId);
-    if (room.systemId === 'emoklore') {
-      const body = values.body.trim() ? Number(values.body) : null;
-      const mind = values.mind.trim() ? Number(values.mind) : null;
-      const intelligence = values.intelligence.trim() ? Number(values.intelligence) : null;
-      const derivedHp = Number.isFinite(body) ? String(body + 10) : '';
-      const derivedMp = Number.isFinite(mind) && Number.isFinite(intelligence) ? String(mind + intelligence) : '';
-      return {
-        playerId,
-        role: 'npc',
-        name: npc.name,
-        characterName: values.characterName,
-        stats: [
-          ['HP', values.hp || derivedHp, 'hp'], ['MP', values.mp || derivedMp, 'mp'],
-          ['共鳴', values.resonance, 'resonance'],
-          ['表', values.resonanceEmotionSurface || values.resonanceEmotion],
-          ['裏', values.resonanceEmotionHidden], ['ルーツ', values.resonanceEmotionRoot]
-        ],
-        statsVisibleToPlayers: npc.statsVisibleToPlayers !== false
-      };
-    }
-    return {
-      playerId,
-      role: 'npc',
-      name: npc.name,
-      characterName: values.characterName,
-      hp: values.hp,
-      san: values.san,
-      luck: values.luck,
-      statsVisibleToPlayers: npc.statsVisibleToPlayers !== false
-    };
-  }
-  const values = room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
-  if (room.systemId === 'emoklore') {
-    const body = values.body.trim() ? Number(values.body) : null;
-    const mind = values.mind.trim() ? Number(values.mind) : null;
-    const intelligence = values.intelligence.trim() ? Number(values.intelligence) : null;
-    const derivedHp = Number.isFinite(body) ? String(body + 10) : '';
-    const derivedMp = Number.isFinite(mind) && Number.isFinite(intelligence) ? String(mind + intelligence) : '';
-    return {
-      playerId,
-      role: 'pc',
-      name: room.players.get(playerId)?.name || playerId,
-      characterName: values.characterName || '',
-      stats: [
-        ['HP', values.hp || derivedHp, 'hp'], ['MP', values.mp || derivedMp, 'mp'],
-        ['共鳴', values.resonance, 'resonance'],
-        ['表', values.resonanceEmotionSurface || values.resonanceEmotion],
-        ['裏', values.resonanceEmotionHidden], ['ルーツ', values.resonanceEmotionRoot]
-      ]
-    };
-  }
-  return {
-    playerId,
-    role: 'pc',
-    name: room.players.get(playerId)?.name || playerId,
-    characterName: values.characterName || '',
-    hp: values.hp,
-    san: values.san,
-    luck: values.luck
-  };
+  const values = npc
+    ? getNpcCharacterSheet(npc, room.systemId)
+    : room.characterSheets.get(playerId) || createEmptyCharacterSheet(room.systemId);
+  const base = npc
+    ? { playerId, role: 'npc', name: npc.name, characterName: values.characterName }
+    : { playerId, role: 'pc', name: room.players.get(playerId)?.name || playerId, characterName: values.characterName || '' };
+  const stats = room.systemId === 'emoklore'
+    ? { stats: getEmokloreStatusStats(values) }
+    : { hp: values.hp, san: values.san, luck: values.luck };
+  return npc
+    ? { ...base, ...stats, statsVisibleToPlayers: npc.statsVisibleToPlayers !== false }
+    : { ...base, ...stats };
 }
 function adjustCharacterStatus(room, playerId, field, delta) {
   const limits = room.systemId === 'emoklore'
@@ -545,7 +538,7 @@ function adjustCharacterStatus(room, playerId, field, delta) {
     : 0;
   const current = Number(values[field] || derivedValue) || 0;
   const maximum = room.systemId === 'emoklore' && field !== 'resonance' ? derivedValue : limits[field];
-  values[field] = String(Math.max(0, Math.min(maximum, current + delta)));
+  values[field] = String(clamp(current + delta, 0, maximum));
   if (npc) npc.values = values;
   else room.characterSheets.set(playerId, values);
   touchRoom(room);
@@ -575,6 +568,28 @@ function broadcastCharacterStatus(roomId, room, characterId) {
     io.to(socketId).emit('character-status-updated', getOnlineCharacterStatuses(room, member.role)
       .find((status) => status.playerId === characterId));
   });
+}
+function emitToGms(room, event, payload, exceptSocketId = '') {
+  room.members.forEach((member) => {
+    if (member.role === 'gm' && member.id !== exceptSocketId) io.to(member.id).emit(event, payload);
+  });
+}
+function emitSheetUpdate(room, playerId, update) {
+  room.members.forEach((recipient) => {
+    if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
+      io.to(recipient.id).emit('character-sheet-updated', update);
+    }
+  });
+}
+function resetNpcMic(roomId, room) {
+  room.npcSpeaking = false;
+  room.npcMicTargetAssetId = '';
+  io.to(`room:${roomId}`).emit('npc-speaking', false);
+  io.to(`room:${roomId}`).emit('npc-mic-target', '');
+}
+function canEditCharacter(room, member, characterId) {
+  if (room.npcs.has(characterId)) return member.role === 'gm';
+  return member.role === 'gm' || (member.role === 'pc' && member.playerId === characterId);
 }
 function canSeeMessage(message, member) {
   if (message.scope !== 'private') return true;
@@ -606,10 +621,7 @@ function clearSocketRoom(socket) {
     const previousRoom = rooms.get(previousRoomId);
     if (previousRoom) {
       if (socket.data.member?.role === 'gm' && (previousRoom.npcSpeaking || previousRoom.npcMicTargetAssetId)) {
-        previousRoom.npcSpeaking = false;
-        previousRoom.npcMicTargetAssetId = '';
-        io.to(`room:${previousRoomId}`).emit('npc-speaking', false);
-        io.to(`room:${previousRoomId}`).emit('npc-mic-target', '');
+        resetNpcMic(previousRoomId, previousRoom);
       }
       if (socket.data.member?.role === 'pc' && socket.data.member.playerId) {
         const speakingSockets = previousRoom.speakingPlayers?.get(socket.data.member.playerId);
@@ -770,14 +782,12 @@ io.on('connection', (socket) => {
     room.boardLayoutSaves.push({
       id: crypto.randomUUID(),
       name,
-      boardAssets: JSON.parse(JSON.stringify(room.boardAssets.filter((asset) => asset.category !== 'bgm' && asset.category !== 'characters'))),
+      boardAssets: cloneJson(room.boardAssets.filter((asset) => asset.category !== 'bgm' && asset.category !== 'characters')),
       createdAt: new Date().toISOString()
     });
     touchRoom(room);
     const saves = getBoardLayoutSaveSummaries(room);
-    room.members.forEach((member) => {
-      if (member.role === 'gm') io.to(member.id).emit('board-layout-saves-updated', saves);
-    });
+    emitToGms(room, 'board-layout-saves-updated', saves);
     acknowledge?.({ ok: true, saves });
   });
 
@@ -795,14 +805,11 @@ io.on('connection', (socket) => {
     }
     const preservedAssets = room.boardAssets.filter((asset) => asset.category === 'bgm' || asset.category === 'characters');
     room.boardAssets = [
-      ...JSON.parse(JSON.stringify(savedLayout.boardAssets)),
-      ...JSON.parse(JSON.stringify(preservedAssets))
+      ...cloneJson(savedLayout.boardAssets),
+      ...cloneJson(preservedAssets)
     ];
     if (room.npcMicTargetAssetId && !room.boardAssets.some((asset) => asset.id === room.npcMicTargetAssetId && asset.category === 'npcs')) {
-      room.npcSpeaking = false;
-      room.npcMicTargetAssetId = '';
-      io.to(`room:${id}`).emit('npc-speaking', false);
-      io.to(`room:${id}`).emit('npc-mic-target', '');
+      resetNpcMic(id, room);
     }
     touchRoom(room);
     io.to(`room:${id}`).emit('board-assets', room.boardAssets);
@@ -824,9 +831,7 @@ io.on('connection', (socket) => {
     room.boardLayoutSaves.splice(saveIndex, 1);
     touchRoom(room);
     const saves = getBoardLayoutSaveSummaries(room);
-    room.members.forEach((member) => {
-      if (member.role === 'gm') io.to(member.id).emit('board-layout-saves-updated', saves);
-    });
+    emitToGms(room, 'board-layout-saves-updated', saves);
     acknowledge?.({ ok: true, saves });
   });
 
@@ -860,10 +865,8 @@ io.on('connection', (socket) => {
     const normalizedPages = normalizeScenarioPages(scenario);
     room.scenario = normalizedPages;
     touchRoom(room);
-    room.members.forEach((member) => {
-      if (member.role === 'gm' && member.id !== socket.id) io.to(member.id).emit('scenario-updated', normalizeScenarioPages(room.scenario));
-    });
-    acknowledge?.({ ok: true, scenario: normalizeScenarioPages(room.scenario) });
+    emitToGms(room, 'scenario-updated', room.scenario, socket.id);
+    acknowledge?.({ ok: true, scenario: room.scenario });
   });
 
   socket.on('get-character-statuses', (_payload, acknowledge) => {
@@ -903,7 +906,7 @@ io.on('connection', (socket) => {
       acknowledge?.({ ok: false, error: 'キャラクターシートまたは参加者を確認できません。' });
       return;
     }
-    if (npc ? member.role !== 'gm' : member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+    if (!canEditCharacter(room, member, playerId)) {
       acknowledge?.({ ok: false, error: 'このキャラクターシートを編集する権限がありません。' });
       return;
     }
@@ -917,16 +920,10 @@ io.on('connection', (socket) => {
     touchRoom(room);
     const update = { playerId, role: npc ? 'npc' : 'pc', values: sheet, name: npc?.name || room.players.get(playerId)?.name || playerId };
     if (npc) {
-      room.members.forEach((recipient) => {
-        if (recipient.role === 'gm') io.to(recipient.id).emit('character-sheet-updated', update);
-      });
+      emitToGms(room, 'character-sheet-updated', update);
       broadcastMembers(id);
     } else {
-      room.members.forEach((recipient) => {
-        if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
-          io.to(recipient.id).emit('character-sheet-updated', update);
-        }
-      });
+      emitSheetUpdate(room, playerId, update);
     }
     broadcastCharacterStatus(id, room, playerId);
     acknowledge?.({ ok: true, ...update });
@@ -942,7 +939,7 @@ io.on('connection', (socket) => {
       acknowledge?.({ ok: false, error: 'キャラクターまたはステータスを確認できません。' });
       return;
     }
-    if (isNpc ? member.role !== 'gm' : member.role !== 'gm' && (member.role !== 'pc' || member.playerId !== playerId)) {
+    if (!canEditCharacter(room, member, playerId)) {
       acknowledge?.({ ok: false, error: 'このキャラクターのステータスを変更する権限がありません。' });
       return;
     }
@@ -952,12 +949,7 @@ io.on('connection', (socket) => {
       return;
     }
     if (!isNpc) {
-      const update = { playerId, values, name: room.players.get(playerId)?.name || playerId };
-      room.members.forEach((recipient) => {
-        if (recipient.role === 'gm' || (recipient.role === 'pc' && recipient.playerId === playerId)) {
-          io.to(recipient.id).emit('character-sheet-updated', update);
-        }
-      });
+      emitSheetUpdate(room, playerId, { playerId, values, name: room.players.get(playerId)?.name || playerId });
     }
     const status = getCharacterStatus(room, playerId);
     broadcastCharacterStatus(id, room, playerId);
@@ -999,8 +991,7 @@ io.on('connection', (socket) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
-    const hasValidManagementToken = room && (room.gmToken === gmToken || room.inviteToken === inviteToken);
-    if (!hasValidManagementToken || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
+    if (!hasManagementToken(room, gmToken, inviteToken) || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
 
@@ -1155,12 +1146,7 @@ io.on('connection', (socket) => {
       acknowledge?.({ ok: false, error: '担当キャラクター以外は削除できません。' });
       return;
     }
-    if (room.npcMicTargetAssetId === assetId) {
-      room.npcSpeaking = false;
-      room.npcMicTargetAssetId = '';
-      io.to(`room:${id}`).emit('npc-speaking', false);
-      io.to(`room:${id}`).emit('npc-mic-target', '');
-    }
+    if (room.npcMicTargetAssetId === assetId) resetNpcMic(id, room);
     const [{ groupId, differenceSetId }] = room.boardAssets.splice(assetIndex, 1);
     if (differenceSetId) {
       const remainingDifferences = room.boardAssets.filter((asset) => asset.differenceSetId === differenceSetId);
@@ -1171,13 +1157,7 @@ io.on('connection', (socket) => {
     }
     if (groupId) {
       const remainingGroupAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
-      if (remainingGroupAssets.length === 1 && !remainingGroupAssets[0].differenceSetId) {
-        remainingGroupAssets.forEach((asset) => {
-          delete asset.groupId;
-          delete asset.groupName;
-          delete asset.groupVisible;
-        });
-      }
+      if (remainingGroupAssets.length === 1 && !remainingGroupAssets[0].differenceSetId) clearGroupFields(remainingGroupAssets);
     }
     touchRoom(room);
     io.to(`room:${id}`).emit('board-assets', room.boardAssets);
@@ -1228,11 +1208,7 @@ io.on('connection', (socket) => {
       const firstIndex = room.boardAssets.findIndex((asset) => selectedSet.has(asset.id));
       const firstAsset = room.boardAssets[firstIndex];
       const previousGroupIds = new Set(selectedAssets.map((asset) => asset.groupId).filter(Boolean));
-      room.boardAssets.filter((asset) => previousGroupIds.has(asset.groupId) && !selectedSet.has(asset.id)).forEach((asset) => {
-        delete asset.groupId;
-        delete asset.groupName;
-        delete asset.groupVisible;
-      });
+      clearGroupFields(room.boardAssets.filter((asset) => previousGroupIds.has(asset.groupId) && !selectedSet.has(asset.id)));
       const differenceSetId = crypto.randomUUID();
       const differenceName = cleanText(groupName, 40) || `差分${room.boardAssets.filter((asset) => asset.differenceSetId).length + 1}`;
       selectedAssets.forEach((asset, index) => {
@@ -1264,11 +1240,7 @@ io.on('connection', (socket) => {
       const firstIndex = room.boardAssets.findIndex((asset) => selectedSet.has(asset.id));
       const previousGroupIds = new Set(selectedAssets.map((asset) => asset.groupId).filter(Boolean));
       room.boardAssets = room.boardAssets.filter((asset) => !selectedSet.has(asset.id));
-      room.boardAssets.filter((asset) => previousGroupIds.has(asset.groupId)).forEach((asset) => {
-        delete asset.groupId;
-        delete asset.groupName;
-        delete asset.groupVisible;
-      });
+      clearGroupFields(room.boardAssets.filter((asset) => previousGroupIds.has(asset.groupId)));
       const group = { id: crypto.randomUUID(), name };
       selectedAssets.forEach((asset) => { asset.groupId = group.id; asset.groupName = group.name; asset.groupVisible = true; });
       room.boardAssets.splice(Math.min(firstIndex, room.boardAssets.length), 0, ...selectedAssets);
@@ -1290,11 +1262,7 @@ io.on('connection', (socket) => {
       if (!canManageBoardAssets(member, groupedAssets)) { acknowledge?.({ ok: false, error: 'グループを編集する権限がありません。' }); return; }
       if (groupedAssets.some((asset) => asset.category === 'bgm')) { acknowledge?.({ ok: false, error: 'BGMレイヤーはグループ操作できません。' }); return; }
       if (groupedAssets.some((asset) => asset.differenceSetId)) clearDifferenceRegistration(groupedAssets);
-      else groupedAssets.forEach((asset) => {
-          delete asset.groupId;
-          delete asset.groupName;
-          delete asset.groupVisible;
-        });
+      else clearGroupFields(groupedAssets);
     } else if (action === 'toggle-group-visibility' || action === 'toggle-group-lock') {
       if (!groupId) { acknowledge?.({ ok: false, error: 'グループが見つかりません。' }); return; }
       const groupedAssets = room.boardAssets.filter((asset) => asset.groupId === groupId);
@@ -1359,8 +1327,8 @@ io.on('connection', (socket) => {
       if (!canManageBoardAssets(member, movingAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
       if (movingAssets.some((asset) => asset.locked)) { acknowledge?.({ ok: false, error: 'グループ内にロック中のレイヤーがあります。' }); return; }
       movingAssets.forEach((asset) => {
-        asset.x = Math.max(0.03, Math.min(0.97, asset.x + offsetX));
-        asset.y = Math.max(0.03, Math.min(0.97, asset.y + offsetY));
+        asset.x = clamp(asset.x + offsetX, 0.03, 0.97);
+        asset.y = clamp(asset.y + offsetY, 0.03, 0.97);
       });
     } else if (action === 'resize') {
       const nextX = Number(x);
@@ -1373,10 +1341,10 @@ io.on('connection', (socket) => {
       if (!canManageBoardAssets(member, resizedAssets)) { acknowledge?.({ ok: false, error: 'このレイヤーを編集する権限がありません。' }); return; }
       if (resizedAssets.some((asset) => asset.locked) || ![nextX, nextY, nextWidth, nextHeight].every(Number.isFinite)) { acknowledge?.({ ok: false, error: 'この画像はサイズ変更できません。' }); return; }
       resizedAssets.forEach((asset) => {
-        asset.x = Math.max(0.03, Math.min(0.97, nextX));
-        asset.y = Math.max(0.03, Math.min(0.97, nextY));
-        asset.width = Math.max(0.04, Math.min(3, nextWidth));
-        asset.height = Math.max(0.04, Math.min(3, nextHeight));
+        asset.x = clamp(nextX, 0.03, 0.97);
+        asset.y = clamp(nextY, 0.03, 0.97);
+        asset.width = clamp(nextWidth, 0.04, 3);
+        asset.height = clamp(nextHeight, 0.04, 3);
       });
     } else {
       if (action === 'toggle-lock') {
@@ -1430,8 +1398,7 @@ io.on('connection', (socket) => {
   socket.on('duplicate-room', async ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const sourceRoom = id && rooms.get(id);
-    const hasValidManagementToken = sourceRoom && (sourceRoom.gmToken === gmToken || sourceRoom.inviteToken === inviteToken);
-    if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    if (!hasManagementToken(sourceRoom, gmToken, inviteToken)) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     const duplicateId = createRoomId();
     const duplicateRoom = getRoom(duplicateId, sourceRoom.systemId, `${sourceRoom.title}（複製）`.slice(0, 80), sourceRoom.synopsis);
     duplicateRoom.inviteToken = crypto.randomBytes(32).toString('hex');
@@ -1448,8 +1415,7 @@ io.on('connection', (socket) => {
   socket.on('delete-room', ({ roomId, gmToken, inviteToken } = {}, acknowledge) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
-    const hasValidManagementToken = room && (room.gmToken === gmToken || room.inviteToken === inviteToken);
-    if (!hasValidManagementToken) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
+    if (!hasManagementToken(room, gmToken, inviteToken)) { acknowledge?.({ ok: false, error: 'ルーム情報が無効です。' }); return; }
     rooms.delete(id);
     for (const [token, session] of sessions) if (session.roomId === id) sessions.delete(token);
     io.to(`room:${id}`).emit('room-deleted');
@@ -1502,9 +1468,7 @@ io.on('connection', (socket) => {
       targetRole: targetMember?.role || '',
       time: new Date().toISOString()
     };
-    room.messages.push(message);
-    if (room.messages.length > 200) room.messages.shift();
-    touchRoom(room);
+    appendMessage(room, message);
     if (!targetMember) {
       io.to(`room:${id}`).emit('message', message);
       return;
@@ -1637,9 +1601,7 @@ io.on('connection', (socket) => {
       rollTotal: total,
       time: new Date().toISOString()
     };
-    room.messages.push(message);
-    if (room.messages.length > 200) room.messages.shift();
-    touchRoom(room);
+    appendMessage(room, message);
     if (!isSecret) {
       io.to(`room:${id}`).emit('message', message);
       return;
