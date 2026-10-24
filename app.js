@@ -1270,17 +1270,18 @@ function renderAssets(assets) {
 
     article.appendChild(infoDiv);
 
-    if (state.currentRole === 'gm' && asset.category === 'characters') {
+    if (state.currentRole === 'gm' && ['characters', 'npcs'].includes(asset.category)) {
+      const isNpcAsset = asset.category === 'npcs';
       const assignment = document.createElement('select');
       assignment.className = 'character-assignment';
-      assignment.setAttribute('aria-label', `${asset.name || 'キャラクター'}の担当PC`);
+      assignment.setAttribute('aria-label', isNpcAsset ? `${asset.name || 'NPC'}の紐づけNPC` : `${asset.name || 'キャラクター'}の担当PC`);
       const unassigned = document.createElement('option');
       unassigned.value = '';
-      unassigned.textContent = '未割当';
+      unassigned.textContent = isNpcAsset ? '紐づけなし' : '未割当';
       assignment.appendChild(unassigned);
-      state.currentMembers.filter((member) => member.role === 'pc').forEach((member) => {
+      state.currentMembers.filter((member) => member.role === (isNpcAsset ? 'npc' : 'pc')).forEach((member) => {
         const option = document.createElement('option');
-        option.value = member.playerId;
+        option.value = isNpcAsset ? member.id : member.playerId;
         option.textContent = member.name || '名前未設定';
         assignment.appendChild(option);
       });
@@ -1288,7 +1289,7 @@ function renderAssets(assets) {
       assignment.addEventListener('change', () => {
         socket.emit('assign-character', { key: asset.key, playerId: assignment.value }, (result) => {
           if (!result?.ok) {
-            setStatus(result?.error || '担当PCを設定できませんでした');
+            setStatus(result?.error || (isNpcAsset ? 'NPCを紐づけできませんでした' : '担当PCを設定できませんでした'));
             assignment.value = asset.assignedPlayerId || '';
           }
         });
@@ -2878,7 +2879,10 @@ socket.on('asset-added', (asset) => {
   renderAssets(state.assets);
 });
 socket.on('asset-deleted', loadAssets);
-socket.on('character-assigned', loadAssets);
+socket.on('character-assigned', () => {
+  loadAssets();
+  loadCharacterStatuses();
+});
 socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime, volume }) => {
   const placedAsset = state.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
   if (!placedAsset) return;
@@ -2901,9 +2905,17 @@ socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime, volum
   if (asset?.url) renderBoardAssets();
   else loadAssets();
 });
+// NPC画像の表示/非表示に応じてサイドバーのNPC表示を更新する（連続した更新はまとめる）
+let characterStatusRefreshTimer = 0;
+function scheduleCharacterStatusRefresh() {
+  clearTimeout(characterStatusRefreshTimer);
+  characterStatusRefreshTimer = setTimeout(loadCharacterStatuses, 150);
+}
+
 socket.on('board-assets', (boardAssets) => {
   const assets = Array.isArray(boardAssets) ? boardAssets : [];
   renderBoardAssets(assets);
+  scheduleCharacterStatusRefresh();
   if (state.currentRole === 'pc') {
     if (assets.some((placedAsset) => !state.assets.some((asset) => asset.key === placedAsset.key))) loadAssets();
     if (hasAssignedCharacterOnBoard()) void startPlayerMicMonitor();
