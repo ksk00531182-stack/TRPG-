@@ -1529,19 +1529,12 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
     image.src = asset.url;
     object.append(image, hitArea);
     object.addEventListener('contextmenu', (event) => {
-      if (placedAsset.category === 'npcs' && state.currentRole === 'gm') {
-        event.preventDefault();
-        const differenceAssets = placedAsset.differenceSetId
-          ? state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId)
-          : [];
-        showBoardDifferenceMenu(event, placedAsset, differenceAssets.length > 1 ? differenceAssets : []);
-        return;
-      }
-      if (!placedAsset.differenceSetId) return;
-      const differenceAssets = state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId);
-      if (differenceAssets.length < 2 || !canManageLayerAssets(differenceAssets)) return;
+      if (!canManageLayerAssets([placedAsset])) return;
       event.preventDefault();
-      showBoardDifferenceMenu(event, placedAsset, differenceAssets);
+      const differenceAssets = placedAsset.differenceSetId
+        ? state.boardAssets.filter((item) => item.differenceSetId === placedAsset.differenceSetId)
+        : [];
+      showBoardDifferenceMenu(event, placedAsset, differenceAssets.length > 1 ? differenceAssets : []);
     });
     if (canEditBoardAsset && !placedAsset.locked) {
       object.addEventListener('pointerdown', (event) => {
@@ -1876,6 +1869,22 @@ function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
   const menu = elements.boardDifferenceMenu;
   if (!menu || !elements.playArea) return;
   menu.innerHTML = '';
+  const hideOption = document.createElement('button');
+  hideOption.type = 'button';
+  hideOption.className = 'board-difference-option npc-mic-context-option';
+  hideOption.setAttribute('role', 'menuitem');
+  hideOption.textContent = '非表示にする';
+  hideOption.addEventListener('click', () => {
+    menu.hidden = true;
+    socket.emit('update-board-asset', {
+      assetId: placedAsset.id,
+      action: 'toggle-visibility',
+      visible: false
+    }, (result) => {
+      if (!result?.ok) setStatus(result?.error || '画像を非表示にできませんでした');
+    });
+  });
+  menu.appendChild(hideOption);
   if (placedAsset.category === 'npcs' && state.currentRole === 'gm') {
     const isMicTarget = state.npcMicTargetAssetId === placedAsset.id;
     const micOption = document.createElement('button');
