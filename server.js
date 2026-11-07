@@ -673,6 +673,20 @@ function joinRoom(socket, id, member, acknowledge, inviteToken) {
 }
 
 io.on('connection', (socket) => {
+  socket.on('list-rooms', (acknowledge) => {
+    const publicRooms = [...rooms.entries()]
+      .map(([id, room]) => ({
+        roomId: id,
+        roomTitle: room.title,
+        systemId: room.systemId,
+        systemName: trpgSystems[room.systemId]?.name || '',
+        createdAt: room.createdAt,
+        updatedAt: room.updatedAt
+      }))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    acknowledge?.({ ok: true, rooms: publicRooms });
+  });
+
   socket.on('set-player-speaking', ({ speaking } = {}, acknowledge) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
@@ -998,7 +1012,11 @@ io.on('connection', (socket) => {
     const id = normalizeRoomId(roomId);
     const room = id && rooms.get(id);
     const member = { id: socket.id, name: cleanText(name, 40), role: 'gm' };
-    if (!hasManagementToken(room, gmToken, inviteToken) || !member.name) { acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' }); return; }
+    const hasAccessToken = Boolean(gmToken || inviteToken);
+    if (!room || (hasAccessToken && !hasManagementToken(room, gmToken, inviteToken)) || !member.name) {
+      acknowledge?.({ ok: false, error: 'ルーム情報が無効か、GM名がありません。' });
+      return;
+    }
     joinRoom(socket, id, member, acknowledge, room.inviteToken);
   });
 
