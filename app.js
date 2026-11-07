@@ -1419,6 +1419,7 @@ window.addEventListener('resize', () => {
 
 function renderBoardAssets(boardAssets = state.boardAssets) {
   if (!elements.boardAssets || !elements.characterBoardAssets || !elements.layerList || !elements.characterLayerList || !elements.npcLayerList || !elements.bgmLayerList || !elements.characterLayerBox || !elements.npcLayerBox || !elements.bgmLayerBox) return;
+  const layerSidebarScrollTop = elements.layerSidebarPanel?.scrollTop || 0;
   if (elements.boardDifferenceMenu) elements.boardDifferenceMenu.hidden = true;
   state.boardAssets = Array.isArray(boardAssets) ? boardAssets : [];
   const activeBgmIds = new Set(state.boardAssets.filter((asset) => asset.category === 'bgm').map((asset) => asset.id));
@@ -1776,17 +1777,17 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
         toggleButton.className = 'bgm-toggle';
         const updateToggleButton = () => {
           toggleButton.textContent = placedAsset.bgmPlaying ? 'Ⅱ' : '▷';
-          toggleButton.title = placedAsset.bgmPlaying ? 'BGMを一時停止' : 'BGMを再生（ループ）';
+          toggleButton.title = placedAsset.bgmPlaying ? 'BGMを停止' : 'BGMを再生（ループ）';
           toggleButton.setAttribute('aria-label', toggleButton.title);
         };
         updateToggleButton();
         toggleButton.addEventListener('click', () => {
           if (placedAsset.bgmPlaying) {
-            placedAsset.bgmOffset = player.audio.currentTime || placedAsset.bgmOffset || 0;
+            placedAsset.bgmOffset = 0;
             placedAsset.bgmPlaying = false;
             placedAsset.bgmStartedAt = 0;
-            pauseBgm(player);
-            socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'pause', currentTime: placedAsset.bgmOffset });
+            stopBgm(player);
+            socket.emit('control-board-bgm', { assetId: placedAsset.id, action: 'stop', currentTime: 0 });
           } else {
             placedAsset.bgmPlaying = true;
             placedAsset.bgmStartedAt = Date.now();
@@ -1863,6 +1864,12 @@ function renderBoardAssets(boardAssets = state.boardAssets) {
       list.appendChild(row);
     });
   });
+  if (elements.layerSidebarPanel) {
+    elements.layerSidebarPanel.scrollTop = layerSidebarScrollTop;
+    requestAnimationFrame(() => {
+      elements.layerSidebarPanel.scrollTop = layerSidebarScrollTop;
+    });
+  }
 }
 
 function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
@@ -2955,10 +2962,14 @@ socket.on('board-bgm-control', ({ assetId, action, startedAt, currentTime, volum
   }
   placedAsset.bgmPlaying = action === 'play';
   placedAsset.bgmStartedAt = action === 'play' ? startedAt : 0;
-  if (Number.isFinite(currentTime)) placedAsset.bgmOffset = Math.max(0, currentTime);
-  if (action === 'pause') {
+  if (action === 'stop') placedAsset.bgmOffset = 0;
+  else if (Number.isFinite(currentTime)) placedAsset.bgmOffset = Math.max(0, currentTime);
+  if (action === 'pause' || action === 'stop') {
     const player = state.bgmPlayers.get(assetId);
-    if (player) pauseBgm(player);
+    if (player) {
+      if (action === 'stop') stopBgm(player);
+      else pauseBgm(player);
+    }
     renderBoardAssets();
     return;
   }

@@ -1109,7 +1109,7 @@ io.on('connection', (socket) => {
     const id = socket.data.roomId;
     const room = id && rooms.get(id);
     const boardAsset = room?.boardAssets.find((asset) => asset.id === assetId && asset.category === 'bgm');
-    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'pause', 'volume'].includes(action)) {
+    if (!room || socket.data.member?.role !== 'gm' || !boardAsset || !['play', 'pause', 'stop', 'volume'].includes(action)) {
       acknowledge?.({ ok: false, error: 'BGMを操作できません。' });
       return;
     }
@@ -1127,7 +1127,25 @@ io.on('connection', (socket) => {
       return;
     }
     const offset = Number(currentTime);
-    if (Number.isFinite(offset)) boardAsset.bgmOffset = Math.max(0, offset);
+    if (action === 'stop') {
+      boardAsset.bgmOffset = 0;
+    } else if (Number.isFinite(offset)) {
+      boardAsset.bgmOffset = Math.max(0, offset);
+    }
+    if (action === 'play') {
+      room.boardAssets.forEach((otherAsset) => {
+        if (otherAsset.id === assetId || otherAsset.category !== 'bgm' || !otherAsset.bgmPlaying) return;
+        otherAsset.bgmPlaying = false;
+        otherAsset.bgmStartedAt = 0;
+        otherAsset.bgmOffset = 0;
+        io.to(`room:${id}`).emit('board-bgm-control', {
+          assetId: otherAsset.id,
+          action: 'stop',
+          startedAt: 0,
+          currentTime: 0
+        });
+      });
+    }
     boardAsset.bgmPlaying = action === 'play';
     boardAsset.bgmStartedAt = action === 'play' ? Date.now() : 0;
     touchRoom(room);
