@@ -1878,7 +1878,8 @@ function showBoardDifferenceMenu(event, placedAsset, differenceAssets) {
     menu.hidden = true;
     socket.emit('update-board-asset', {
       assetId: placedAsset.id,
-      action: 'toggle-visibility',
+      groupId: placedAsset.groupId || undefined,
+      action: placedAsset.groupId ? 'toggle-group-visibility' : 'toggle-visibility',
       visible: false
     }, (result) => {
       if (!result?.ok) setStatus(result?.error || '画像を非表示にできませんでした');
